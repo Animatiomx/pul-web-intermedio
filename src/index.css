@@ -1,0 +1,67 @@
+@font-face {
+  font-family: 'SourceSans3';
+  src: url('./assets/sanspro.ttf') format('truetype');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GoodTime';
+  src: url('./assets/goodtime.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --color-orange: #ff5045;
+  --color-brown: #51212f;
+  --color-magenta: #ab1e5c;
+  --color-grey: #f4f4f4;
+  --color-coral: #ffa8a1;
+  --color-pastel: #fef5f6;
+  --color-title: #1c1c1c;
+  --color-subtitle: #888888;
+  --color-text: #3a3a3c;
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-background: #f4f4f4;
+  --color-card: #ffffff;
+  --color-border: #e8e8e8;
+  --color-divider: #f0f0f0;
+  --color-text-muted: #aeaeb2;
+  --color-text-secondary: #6e6e73;
+  --color-background-secondary: #f8f8f8;
+  --color-error: #ef4444;
+  --font-body: 'SourceSans3', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'GoodTime', 'SourceSans3', system-ui, sans-serif;
+  --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.06);
+
+  font-family: var(--font-body);
+  color: var(--color-text);
+  background: var(--color-background);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--color-background);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100svh;
+  margin: 0;
+}
+
+#root {
+  min-height: 100svh;
+}
