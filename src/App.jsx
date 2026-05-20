@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import logo from './assets/logo.png'
+import { firebaseConfig } from './firebaseConfig'
 import './App.css'
 
-const FIREBASE_PROJECT_ID =
-  import.meta.env.VITE_FIREBASE_PROJECT_ID || 'pul-33698'
-const FIREBASE_API_KEY =
-  import.meta.env.VITE_FIREBASE_API_KEY || 'REDACTED_CREDENTIAL_09d5e8ea'
+const FIREBASE_PROJECT_ID = firebaseConfig.projectId
+const FIREBASE_API_KEY = firebaseConfig.apiKey
 const APP_DEEP_LINK_BASE =
   import.meta.env.VITE_APP_DEEP_LINK_BASE || 'pul://registro-express'
 const DIVISION_DEEP_LINK_BASE =
