@@ -16,7 +16,9 @@ const LOGIN_DEEP_LINK_BASE =
   import.meta.env.VITE_LOGIN_DEEP_LINK_BASE || 'pul://login'
 const STRIPE_CHECKOUT_ENDPOINT = import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || ''
 const EVENT_CHECKOUT_ENDPOINT = import.meta.env.VITE_EVENT_CHECKOUT_ENDPOINT || ''
-const EMAIL_CONFIRMATION_ENDPOINT = import.meta.env.VITE_EMAIL_CONFIRMATION_ENDPOINT || ''
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://api.pul.com.mx'
+const EMAIL_CONFIRMATION_ENDPOINT =
+  import.meta.env.VITE_EMAIL_CONFIRMATION_ENDPOINT || `${BACKEND_URL}/email/send`
 const DIVISION_RESPONSE_ENDPOINT = import.meta.env.VITE_DIVISION_RESPONSE_ENDPOINT || ''
 const APP_STORE_URL = import.meta.env.VITE_APP_STORE_URL || 'https://www.apple.com/app-store/'
 const PLAY_STORE_URL = import.meta.env.VITE_PLAY_STORE_URL || 'https://play.google.com/store'
