@@ -10,6 +10,8 @@ const EVENT_DEEP_LINK_BASE =
   import.meta.env.VITE_EVENT_DEEP_LINK_BASE || 'pul://evento-detalle'
 const LOGIN_DEEP_LINK_BASE =
   import.meta.env.VITE_LOGIN_DEEP_LINK_BASE || 'pul://login'
+const FIREBASE_API_KEY =
+  import.meta.env.VITE_FIREBASE_API_KEY || 'REDACTED_CREDENTIAL_09d5e8ea'
 const STRIPE_CHECKOUT_ENDPOINT = import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || ''
 const EVENT_CHECKOUT_ENDPOINT = import.meta.env.VITE_EVENT_CHECKOUT_ENDPOINT || ''
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://api.pul.com.mx'
@@ -17,6 +19,7 @@ const PUBLIC_INVITE_ENDPOINT =
   import.meta.env.VITE_PUBLIC_INVITE_ENDPOINT || `${BACKEND_URL}/public`
 const EMAIL_CONFIRMATION_ENDPOINT =
   import.meta.env.VITE_EMAIL_CONFIRMATION_ENDPOINT || `${BACKEND_URL}/email/send`
+const PLAN_JOIN_ENDPOINT = import.meta.env.VITE_PLAN_JOIN_ENDPOINT || `${BACKEND_URL}/plans/join`
 const DIVISION_RESPONSE_ENDPOINT = import.meta.env.VITE_DIVISION_RESPONSE_ENDPOINT || ''
 const APP_STORE_URL = import.meta.env.VITE_APP_STORE_URL || 'https://www.apple.com/app-store/'
 const PLAY_STORE_URL = import.meta.env.VITE_PLAY_STORE_URL || 'https://play.google.com/store'
@@ -152,6 +155,9 @@ function normalizeFirestoreDocument(document) {
 
 function normalizePlan(document, id) {
   const data = normalizeFirestoreDocument(document)
+  const integrantes = Array.isArray(data.integrantes) ? data.integrantes : []
+  const solicitudes = Array.isArray(data.solicitudes) ? data.solicitudes : []
+  const miembros = Number(data.integrantesCount ?? integrantes.length ?? 0)
 
   return {
     id: data.id || id,
@@ -167,11 +173,13 @@ function normalizePlan(document, id) {
     endTime: data.horaFin || '',
     address: data.direccion || data.linkedEntity?.address || '',
     host: data.anfitrion?.nombre || 'Anfitrión Pul',
+    hostId: data.anfitrion?.id || '',
     hostImage: data.anfitrion?.imagen || '',
     capacity: data.personas || 0,
-    members:
-      data.integrantesCount ||
-      (Array.isArray(data.integrantes) ? data.integrantes.length : 0),
+    members: miembros,
+    requests: Number(data.solicitudesCount ?? solicitudes.length ?? 0),
+    visibility: data.visibilidad || 'amigos',
+    status: data.estatus || '',
     tags: data.hashtags || data.tags || data.tendencias?.tags || [],
     image: data.linkedEntity?.image || data.anfitrion?.imagen || '',
     amount: null,
@@ -380,9 +388,13 @@ function fallbackInvite(context) {
     endTime: '',
     address: 'Información disponible dentro de Pul',
     host: 'Pul',
+    hostId: '',
     hostImage: '',
     capacity: 0,
     members: 0,
+    requests: 0,
+    visibility: '',
+    status: '',
     tags: ['Registro express', 'Plan compartido'],
     image: '',
     amount: null,
@@ -523,6 +535,13 @@ function formatCurrency(value) {
   }).format(amount)
 }
 
+function formatPlanVisibility(value) {
+  const visibility = String(value || 'publico').toLowerCase()
+  if (visibility === 'privado') return 'Plan privado'
+  if (visibility === 'amigos') return 'Solo amigos'
+  return 'Plan público'
+}
+
 function validateRegisterForm(form) {
   const errors = {}
   if (form.nombre.trim().length < 2) errors.nombre = 'Escribe tu nombre.'
@@ -571,10 +590,61 @@ async function postJson(endpoint, payload) {
   })
 
   if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}`)
+    let message = `Request failed with ${response.status}`
+    try {
+      const errorPayload = await response.json()
+      message = errorPayload?.message || message
+    } catch {
+      // Keep the generic status error if the backend did not return JSON.
+    }
+    throw new Error(message)
   }
 
   return response.json()
+}
+
+async function signInWithFirebasePassword(email, password) {
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        password,
+        returnSecureToken: true,
+      }),
+    },
+  )
+
+  const payload = await response.json()
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || 'No se pudo iniciar sesión.')
+  }
+
+  return payload
+}
+
+async function signUpWithFirebasePassword(email, password) {
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        password,
+        returnSecureToken: true,
+      }),
+    },
+  )
+
+  const payload = await response.json()
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || 'No se pudo crear la cuenta.')
+  }
+
+  return payload
 }
 
 function App() {
@@ -588,6 +658,7 @@ function App() {
   const [selectedItemId, setSelectedItemId] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [errors, setErrors] = useState({})
+  const [planJoinMessage, setPlanJoinMessage] = useState('')
   const [authUser, setAuthUser] = useState(() => {
     const cached = sessionStorage.getItem('pulExpressUser')
     return cached ? JSON.parse(cached) : null
@@ -664,6 +735,7 @@ function App() {
 
   const isDivision = invite.kind === 'division'
   const isEvent = invite.kind === 'event'
+  const isPlan = invite.kind === 'plan'
   const purchasableItems = isEvent ? [...invite.tickets, ...invite.tables] : []
   const selectedItem =
     purchasableItems.find((item) => item.id === selectedItemId) || purchasableItems[0]
@@ -695,35 +767,66 @@ function App() {
     setAuthUser(user)
     setFlowStatus('authenticated')
     setView(isDivision ? 'payment' : isEvent ? 'event-checkout' : 'landing')
+    setPlanJoinMessage('')
   }
 
-  const onRegisterSubmit = (event) => {
+  const onRegisterSubmit = async (event) => {
     event.preventDefault()
     const nextErrors = validateRegisterForm(registerForm)
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) return
 
-    completeAuth({
-      nombre: registerForm.nombre.trim(),
-      email: registerForm.email.trim(),
-      telefono: registerForm.telefono.trim(),
-      method: 'express-register',
-      createdAt: new Date().toISOString(),
-    })
+    setFlowStatus('registering')
+    try {
+      const firebaseUser = await signUpWithFirebasePassword(
+        registerForm.email.trim(),
+        registerForm.password,
+      )
+      completeAuth({
+        id: firebaseUser.localId,
+        uid: firebaseUser.localId,
+        idToken: firebaseUser.idToken,
+        nombre: registerForm.nombre.trim(),
+        email: firebaseUser.email || registerForm.email.trim(),
+        telefono: registerForm.telefono.trim(),
+        method: 'express-register',
+        createdAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      setFlowStatus('register-error')
+      const message =
+        error.message === 'EMAIL_EXISTS'
+          ? 'Este email ya está registrado. Inicia sesión para continuar.'
+          : error.message || 'No se pudo crear la cuenta.'
+      setErrors({ form: message })
+    }
   }
 
-  const onLoginSubmit = (event) => {
+  const onLoginSubmit = async (event) => {
     event.preventDefault()
     const nextErrors = validateLoginForm(loginForm)
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) return
 
-    completeAuth({
-      nombre: loginForm.email.split('@')[0],
-      email: loginForm.email.trim(),
-      method: 'web-login',
-      createdAt: new Date().toISOString(),
-    })
+    setFlowStatus('logging-in')
+    try {
+      const firebaseUser = await signInWithFirebasePassword(
+        loginForm.email.trim(),
+        loginForm.password,
+      )
+      completeAuth({
+        id: firebaseUser.localId,
+        uid: firebaseUser.localId,
+        idToken: firebaseUser.idToken,
+        nombre: firebaseUser.displayName || loginForm.email.split('@')[0],
+        email: firebaseUser.email || loginForm.email.trim(),
+        method: 'web-login',
+        createdAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      setFlowStatus('login-error')
+      setErrors({ form: error.message || 'No se pudo iniciar sesión.' })
+    }
   }
 
   const openLoginInApp = () => {
@@ -743,6 +846,40 @@ function App() {
       template: 'event-ticket-confirmation',
       purchase,
     })
+  }
+
+  const joinCurrentPlan = async () => {
+    if (!authUser || !invite.id || !isPlan) {
+      setView('login')
+      return
+    }
+
+    setFlowStatus('joining-plan')
+    setPlanJoinMessage('')
+    try {
+      const result = await postJson(PLAN_JOIN_ENDPOINT, {
+        planId: invite.id,
+        user: authUser,
+      })
+      const nextMessage = result?.message || 'Listo, actualizamos tu participación en el plan.'
+      setPlanJoinMessage(nextMessage)
+      setFlowStatus(result?.status === 'requested' ? 'plan-requested' : 'plan-joined')
+      if (result?.status === 'joined') {
+        setInvite((current) => ({
+          ...current,
+          members: Number(current.members || 0) + 1,
+        }))
+      }
+      if (result?.status === 'requested') {
+        setInvite((current) => ({
+          ...current,
+          requests: Number(current.requests || 0) + 1,
+        }))
+      }
+    } catch (error) {
+      setPlanJoinMessage(error.message || 'No se pudo completar la unión al plan.')
+      setFlowStatus('plan-join-error')
+    }
   }
 
   const completeGuestPurchase = async (buyer) => {
@@ -870,59 +1007,190 @@ function App() {
     }
   }
 
+  const planSlots = isPlan
+    ? Array.from({ length: Math.max(invite.capacity || 10, 10) }, (_, index) => index)
+    : []
+
   return (
-    <main className="express-shell">
+    <main className={`express-shell ${isPlan ? 'plan-app-shell' : ''}`}>
       <section className="hero-panel">
-        <nav className="topbar" aria-label="Pul">
-          <img src={logo} alt="Pul" className="brand-logo" />
-          <button
-            className="ghost-button compact"
-            type="button"
-            onClick={() => attemptOpenApp(invite, 'manual-open')}
-            disabled={!invite.id}
-          >
-            Abrir app
-          </button>
-        </nav>
+        {isPlan ? (
+          <nav className="topbar plan-topbar" aria-label="Plan">
+            <button className="round-icon-button" type="button" onClick={() => window.history.back()}>
+              ←
+            </button>
+            <button
+              className="round-icon-button"
+              type="button"
+              onClick={() => attemptOpenApp(invite, 'manual-open')}
+              disabled={!invite.id}
+            >
+              ↔
+            </button>
+          </nav>
+        ) : (
+          <nav className="topbar" aria-label="Pul">
+            <img src={logo} alt="Pul" className="brand-logo" />
+            <button
+              className="ghost-button compact"
+              type="button"
+              onClick={() => attemptOpenApp(invite, 'manual-open')}
+              disabled={!invite.id}
+            >
+              Abrir app
+            </button>
+          </nav>
+        )}
 
         <div className="hero-grid">
           <article className="plan-summary" aria-live="polite">
-            <p className="eyebrow">
-              {isEvent ? 'Evento compartido' : isDivision ? 'División de cuenta' : 'Registro Express'}
-            </p>
-            <h1>{invite.title}</h1>
-            <p className="lead">{invite.description}</p>
+            {isPlan ? (
+              <>
+                <div className="plan-hero-content">
+                  <div className="plan-emoji-badge" aria-hidden="true">
+                    {heroImage ? <img src={heroImage} alt="" /> : '⚽'}
+                  </div>
+                  <div className="plan-kicker">
+                    <span>{invite.tags[0] ? `#${String(invite.tags[0]).replace(/^#/, '')}` : '#casual'}</span>
+                    <span>⌖ {invite.address ? invite.address.split(',')[0] : 'Ubicación por confirmar'}</span>
+                    <span>14 km</span>
+                  </div>
+                  <h1>{invite.title}</h1>
+                  <span className="time-pill">☼ Mediodía</span>
+                </div>
 
-            <div className="meta-grid">
-              <div>
-                <span>Cuándo</span>
-                <strong>{formatInviteDate(invite)}</strong>
-              </div>
-              <div>
-                <span>Dónde</span>
-                <strong>{invite.address || 'Ubicación por confirmar'}</strong>
-              </div>
-              <div>
-                <span>{isDivision ? 'Invita' : 'Anfitrión'}</span>
-                <strong>{invite.host}</strong>
-              </div>
-              <div>
-                <span>{isEvent ? 'Asistentes' : isDivision ? 'Tu parte' : 'Lugares'}</span>
-                <strong>
-                  {isEvent
-                    ? `${invite.members || 0}${invite.capacity ? ` / ${invite.capacity}` : ''}`
-                    : isDivision
-                    ? invite.amount > 0
-                      ? formatCurrency(invite.amount)
-                      : 'Monto por confirmar'
-                    : spotsLeft === null
-                      ? 'Por confirmar'
-                      : spotsLeft > 0
-                        ? `${spotsLeft} disponibles`
-                        : 'Lista llena'}
-                </strong>
-              </div>
-            </div>
+                <div className="plan-info-strip">
+                  <div>
+                    <span>◷</span>
+                    <strong>{formatInviteDate(invite)}</strong>
+                  </div>
+                  <div>
+                    <span>♙</span>
+                    <strong>
+                      {spotsLeft === null
+                        ? 'Lugares por confirmar'
+                        : spotsLeft > 0
+                          ? `Quedan ${spotsLeft} lugares`
+                          : 'Lista llena'}
+                    </strong>
+                  </div>
+                </div>
+
+                <section className="participants-panel" aria-label="Participantes">
+                  <div className="participants-heading">
+                    <span>YA VAN {Math.max(invite.members || 1, 1)}</span>
+                    <strong>{spotsLeft ?? 0} lugares libres</strong>
+                  </div>
+                  <div className="participant-grid">
+                    {planSlots.map((slot) => {
+                      const isHostSlot = slot === 0
+                      const isUserSlot = slot === 1
+                      const isLastSlot = slot === planSlots.length - 1
+                      return (
+                        <div
+                          className={`participant-slot ${isHostSlot ? 'filled' : ''} ${isLastSlot ? 'last' : ''}`}
+                          key={slot}
+                        >
+                          <div className="slot-circle">
+                            {isHostSlot ? (
+                              invite.hostImage || heroImage ? (
+                                <img src={invite.hostImage || heroImage} alt="" />
+                              ) : (
+                                <span>{invite.host.slice(0, 1).toUpperCase()}</span>
+                              )
+                            ) : isUserSlot || isLastSlot ? (
+                              '+'
+                            ) : null}
+                          </div>
+                          {isHostSlot && (
+                            <small>
+                              {invite.host.split(' ')[0]}
+                              <b>HOST</b>
+                            </small>
+                          )}
+                          {isUserSlot && <small>Tu lugar</small>}
+                          {isLastSlot && <small>Último lugar</small>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+
+                <section className="host-card">
+                  <div className="host-avatar">
+                    {invite.hostImage || heroImage ? (
+                      <img src={invite.hostImage || heroImage} alt="" />
+                    ) : (
+                      invite.host.slice(0, 1).toUpperCase()
+                    )}
+                  </div>
+                  <div>
+                    <strong>{invite.host}</strong>
+                    <span>Host · {formatPlanVisibility(invite.visibility)}</span>
+                  </div>
+                </section>
+
+                <section className="plan-detail-section">
+                  <h2>Sobre el plan</h2>
+                  <p>{invite.description}</p>
+                </section>
+
+                <section className="plan-detail-section">
+                  <h2>Dónde</h2>
+                  <div className="location-card">
+                    <div className="fake-map" aria-hidden="true">
+                      <span className="map-pin">●</span>
+                      <span className="google-label">Google</span>
+                    </div>
+                    <div>
+                      <strong>{invite.address || 'Ubicación por confirmar'}</strong>
+                      <button className="map-link" type="button" onClick={() => attemptOpenApp(invite, 'location')}>
+                        ᐅ 14 km · Abrir ubicación
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              </>
+            ) : (
+              <>
+                <p className="eyebrow">
+                  {isEvent ? 'Evento compartido' : isDivision ? 'División de cuenta' : 'Registro Express'}
+                </p>
+                <h1>{invite.title}</h1>
+                <p className="lead">{invite.description}</p>
+
+                <div className="meta-grid">
+                  <div>
+                    <span>Cuándo</span>
+                    <strong>{formatInviteDate(invite)}</strong>
+                  </div>
+                  <div>
+                    <span>Dónde</span>
+                    <strong>{invite.address || 'Ubicación por confirmar'}</strong>
+                  </div>
+                  <div>
+                    <span>{isDivision ? 'Invita' : 'Anfitrión'}</span>
+                    <strong>{invite.host}</strong>
+                  </div>
+                  <div>
+                    <span>{isEvent ? 'Asistentes' : isDivision ? 'Tu parte' : 'Lugares'}</span>
+                    <strong>
+                      {isEvent
+                        ? `${invite.members || 0}${invite.capacity ? ` / ${invite.capacity}` : ''}`
+                        : isDivision
+                        ? invite.amount > 0
+                          ? formatCurrency(invite.amount)
+                          : 'Monto por confirmar'
+                        : spotsLeft === null
+                          ? 'Por confirmar'
+                          : spotsLeft > 0
+                            ? `${spotsLeft} disponibles`
+                            : 'Lista llena'}
+                    </strong>
+                  </div>
+                </div>
+              </>
+            )}
 
             {isDivision && (
               <div className="payment-summary" aria-label="Resumen de cuenta">
@@ -999,19 +1267,52 @@ function App() {
                 </>
               ) : (
                 <>
+                  {authUser ? (
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={joinCurrentPlan}
+                      disabled={flowStatus === 'joining-plan' || !invite.id}
+                    >
+                      {flowStatus === 'joining-plan'
+                        ? 'Entrando al grupo...'
+                        : `Entrar al grupo · vamos ${Math.max(invite.members || 1, 1)}`}
+                    </button>
+                  ) : (
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => setView('login')}
+                    >
+                      Iniciar sesión para unirme
+                    </button>
+                  )}
                   <button
-                    className="primary-button"
+                    className="secondary-button"
                     type="button"
-                    onClick={() => setView('register')}
+                    onClick={() => (authUser ? openLoginInApp() : setView('register'))}
                   >
-                    Registrarse
-                  </button>
-                  <button className="secondary-button" type="button" onClick={openLoginInApp}>
-                    Iniciar sesión
+                    {authUser ? 'Abrir en app' : 'Registrarme'}
                   </button>
                 </>
               )}
             </div>
+
+            {isPlan && authUser && (
+              <p className="status-note">
+                Sesión iniciada como <strong>{authUser.email}</strong>.
+              </p>
+            )}
+
+            {planJoinMessage && (
+              <p
+                className={`status-note ${
+                  flowStatus === 'plan-join-error' ? 'error-note' : 'success-note'
+                }`}
+              >
+                {planJoinMessage}
+              </p>
+            )}
 
             {appPrompt === 'opening' && (
               <p className="status-note">Intentando abrir Pul automáticamente...</p>
@@ -1271,9 +1572,21 @@ function App() {
               {errors.password && <small>{errors.password}</small>}
             </label>
 
+            {errors.form && <p className="status-note error-note">{errors.form}</p>}
+
             <div className="form-actions">
-              <button className="primary-button" type="submit" disabled={!invite.id}>
-                {isEvent ? 'Continuar a compra' : isDivision ? 'Continuar al pago' : 'Unirme al plan'}
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={!invite.id || flowStatus === 'registering'}
+              >
+                {flowStatus === 'registering'
+                  ? 'Creando cuenta...'
+                  : isEvent
+                    ? 'Continuar a compra'
+                    : isDivision
+                      ? 'Continuar al pago'
+                      : 'Crear cuenta'}
               </button>
               <button className="ghost-button" type="button" onClick={() => setView('landing')}>
                 Volver
@@ -1306,8 +1619,14 @@ function App() {
               />
               {errors.password && <small>{errors.password}</small>}
             </label>
+            {errors.form && <p className="status-note error-note">{errors.form}</p>}
             <div className="form-actions">
-              <button className="primary-button" type="submit">Continuar</button>
+              <button className="primary-button" type="submit" disabled={flowStatus === 'logging-in'}>
+                {flowStatus === 'logging-in' ? 'Iniciando sesión...' : 'Continuar'}
+              </button>
+              <button className="secondary-button" type="button" onClick={() => setView('register')}>
+                Registro express
+              </button>
               <button className="ghost-button" type="button" onClick={openLoginInApp}>
                 Abrir en app
               </button>
@@ -1348,6 +1667,46 @@ function App() {
             )}
             {flowStatus === 'reject-error' && (
               <p className="status-note">No se pudo registrar el rechazo. Intenta de nuevo.</p>
+            )}
+          </div>
+        ) : isPlan && authUser ? (
+          <div className="payment-card">
+            <div>
+              <span>Autenticado como</span>
+              <strong>{authUser.email}</strong>
+            </div>
+            <div>
+              <span>Plan</span>
+              <strong>{invite.title}</strong>
+            </div>
+            <div>
+              <span>Lugares</span>
+              <strong>
+                {spotsLeft === null
+                  ? 'Por confirmar'
+                  : spotsLeft > 0
+                    ? `${spotsLeft} disponibles`
+                    : 'Lista llena'}
+              </strong>
+            </div>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={joinCurrentPlan}
+              disabled={flowStatus === 'joining-plan' || !invite.id}
+            >
+              {flowStatus === 'joining-plan'
+                ? 'Entrando al grupo...'
+                : `Entrar al grupo · vamos ${Math.max(invite.members || 1, 1)}`}
+            </button>
+            {planJoinMessage && (
+              <p
+                className={`status-note ${
+                  flowStatus === 'plan-join-error' ? 'error-note' : 'success-note'
+                }`}
+              >
+                {planJoinMessage}
+              </p>
             )}
           </div>
         ) : (
