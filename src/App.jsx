@@ -180,6 +180,7 @@ function normalizePlan(document, id) {
     requests: Number(data.solicitudesCount ?? solicitudes.length ?? 0),
     visibility: data.visibilidad || 'amigos',
     status: data.estatus || '',
+    emoji: data.emoji || '⚽',
     tags: data.hashtags || data.tags || data.tendencias?.tags || [],
     image: data.linkedEntity?.image || data.anfitrion?.imagen || '',
     amount: null,
@@ -395,6 +396,7 @@ function fallbackInvite(context) {
     requests: 0,
     visibility: '',
     status: '',
+    emoji: '⚽',
     tags: ['Registro express', 'Plan compartido'],
     image: '',
     amount: null,
@@ -743,6 +745,17 @@ function App() {
   const spotsLeft =
     invite.capacity > 0 ? Math.max(invite.capacity - invite.members, 0) : null
   const heroImage = invite.image || invite.hostImage
+  const displayTags = [
+    ...new Set(
+      [
+        ...(Array.isArray(invite.tags) ? invite.tags : []),
+        isEvent ? 'Evento' : isDivision ? 'Reservación' : 'Plan',
+        isPlan ? formatPlanVisibility(invite.visibility) : invite.host,
+      ]
+        .filter(Boolean)
+        .map((tag) => String(tag).replace(/^#/, '')),
+    ),
+  ].slice(0, 4)
 
   const onRegisterFieldChange = (event) => {
     const { name, value } = event.target
@@ -1012,20 +1025,12 @@ function App() {
     : []
 
   return (
-    <main className={`express-shell ${isPlan ? 'plan-app-shell' : ''}`}>
+    <main className={`express-shell ${isPlan ? 'plan-app-shell' : 'media-invite-shell'}`}>
       <section className="hero-panel">
         {isPlan ? (
           <nav className="topbar plan-topbar" aria-label="Plan">
             <button className="round-icon-button" type="button" onClick={() => window.history.back()}>
               ←
-            </button>
-            <button
-              className="round-icon-button"
-              type="button"
-              onClick={() => attemptOpenApp(invite, 'manual-open')}
-              disabled={!invite.id}
-            >
-              ↔
             </button>
           </nav>
         ) : (
@@ -1048,10 +1053,12 @@ function App() {
               <>
                 <div className="plan-hero-content">
                   <div className="plan-emoji-badge" aria-hidden="true">
-                    {heroImage ? <img src={heroImage} alt="" /> : '⚽'}
+                    {invite.emoji || '⚽'}
                   </div>
                   <div className="plan-kicker">
-                    <span>{invite.tags[0] ? `#${String(invite.tags[0]).replace(/^#/, '')}` : '#casual'}</span>
+                    {displayTags.slice(0, 2).map((tag) => (
+                      <span key={tag}>#{tag}</span>
+                    ))}
                     <span>⌖ {invite.address ? invite.address.split(',')[0] : 'Ubicación por confirmar'}</span>
                     <span>14 km</span>
                   </div>
@@ -1150,13 +1157,30 @@ function App() {
                     </div>
                   </div>
                 </section>
+
+                <div className="tag-row plan-tag-row" aria-label="Etiquetas">
+                  {displayTags.slice(0, 4).map((tag) => (
+                    <span key={tag}>#{tag}</span>
+                  ))}
+                </div>
               </>
             ) : (
               <>
-                <p className="eyebrow">
-                  {isEvent ? 'Evento compartido' : isDivision ? 'División de cuenta' : 'Registro Express'}
-                </p>
-                <h1>{invite.title}</h1>
+                <div
+                  className={`media-hero-content ${heroImage ? 'has-image' : ''}`}
+                  style={
+                    heroImage
+                      ? {
+                          backgroundImage: `linear-gradient(180deg, rgba(255, 70, 70, 0.08) 0%, rgba(82, 8, 37, 0.76) 100%), url(${heroImage})`,
+                        }
+                      : undefined
+                  }
+                >
+                  <p className="eyebrow">
+                    {isEvent ? 'Evento compartido' : isDivision ? 'División de cuenta' : 'Registro Express'}
+                  </p>
+                  <h1>{invite.title}</h1>
+                </div>
                 <p className="lead">{invite.description}</p>
 
                 <div className="meta-grid">
@@ -1234,14 +1258,15 @@ function App() {
               </div>
             )}
 
-            {invite.tags.length > 0 && (
+            {displayTags.length > 0 && (
               <div className="tag-row" aria-label="Etiquetas">
-                {invite.tags.slice(0, 4).map((tag) => (
-                  <span key={tag}>{String(tag).replace(/^#/, '#')}</span>
+                {displayTags.map((tag) => (
+                  <span key={tag}>#{tag}</span>
                 ))}
               </div>
             )}
 
+            {(!isPlan || authUser) && (
             <div className="cta-row">
               {isEvent ? (
                 <>
@@ -1267,26 +1292,16 @@ function App() {
                 </>
               ) : (
                 <>
-                  {authUser ? (
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={joinCurrentPlan}
-                      disabled={flowStatus === 'joining-plan' || !invite.id}
-                    >
-                      {flowStatus === 'joining-plan'
-                        ? 'Entrando al grupo...'
-                        : `Entrar al grupo · vamos ${Math.max(invite.members || 1, 1)}`}
-                    </button>
-                  ) : (
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => setView('login')}
-                    >
-                      Iniciar sesión para unirme
-                    </button>
-                  )}
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={joinCurrentPlan}
+                    disabled={flowStatus === 'joining-plan' || !invite.id}
+                  >
+                    {flowStatus === 'joining-plan'
+                      ? 'Entrando al grupo...'
+                      : `Entrar al grupo · vamos ${Math.max(invite.members || 1, 1)}`}
+                  </button>
                   <button
                     className="secondary-button"
                     type="button"
@@ -1297,6 +1312,7 @@ function App() {
                 </>
               )}
             </div>
+            )}
 
             {isPlan && authUser && (
               <p className="status-note">

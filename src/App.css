@@ -696,6 +696,65 @@ button:disabled {
   display: none;
 }
 
+.plan-app-shell .plan-tag-row {
+  display: flex;
+  margin: 18px max(20px, calc((100% - 1120px) / 2)) 0;
+}
+
+.media-invite-shell .hero-panel {
+  width: 100%;
+  padding-top: 0;
+}
+
+.media-invite-shell .topbar {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+}
+
+.media-invite-shell .hero-grid {
+  width: 100%;
+  display: block;
+}
+
+.media-invite-shell .plan-summary {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+}
+
+.media-invite-shell .visual-panel {
+  display: none;
+}
+
+.media-hero-content {
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  box-sizing: border-box;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-bottom: 26px;
+  padding: 96px max(20px, calc((100vw - 1120px) / 2)) 34px;
+  color: #ffffff;
+  background:
+    linear-gradient(180deg, rgba(255, 70, 70, 0.1) 0%, rgba(82, 8, 37, 0.76) 100%),
+    linear-gradient(135deg, #ff443f 0%, #c91572 55%, #8b0f49 100%);
+  background-position: center;
+  background-size: cover;
+}
+
+.media-hero-content.has-image {
+  background-blend-mode: normal;
+}
+
+.media-hero-content .eyebrow {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.media-hero-content h1 {
+  color: #ffffff;
+}
+
 .plan-app-shell .action-panel {
   width: 100%;
   grid-template-columns: 1fr;
@@ -770,7 +829,7 @@ button:disabled {
   }
 
   .plan-detail-section .location-card {
-    max-width: 760px;
+    max-width: none;
   }
 
   .plan-app-shell .action-panel {
