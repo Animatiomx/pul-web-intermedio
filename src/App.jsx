@@ -1,10 +1,7 @@
 import { useEffect, useState } from 'react'
 import logo from './assets/logo.png'
-import { firebaseConfig } from './firebaseConfig'
 import './App.css'
 
-const FIREBASE_PROJECT_ID = firebaseConfig.projectId
-const FIREBASE_API_KEY = firebaseConfig.apiKey
 const APP_DEEP_LINK_BASE =
   import.meta.env.VITE_APP_DEEP_LINK_BASE || 'pul://registro-express'
 const DIVISION_DEEP_LINK_BASE =
@@ -16,11 +13,15 @@ const LOGIN_DEEP_LINK_BASE =
 const STRIPE_CHECKOUT_ENDPOINT = import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || ''
 const EVENT_CHECKOUT_ENDPOINT = import.meta.env.VITE_EVENT_CHECKOUT_ENDPOINT || ''
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://api.pul.com.mx'
+const PUBLIC_INVITE_ENDPOINT =
+  import.meta.env.VITE_PUBLIC_INVITE_ENDPOINT || `${BACKEND_URL}/public`
 const EMAIL_CONFIRMATION_ENDPOINT =
   import.meta.env.VITE_EMAIL_CONFIRMATION_ENDPOINT || `${BACKEND_URL}/email/send`
 const DIVISION_RESPONSE_ENDPOINT = import.meta.env.VITE_DIVISION_RESPONSE_ENDPOINT || ''
 const APP_STORE_URL = import.meta.env.VITE_APP_STORE_URL || 'https://www.apple.com/app-store/'
 const PLAY_STORE_URL = import.meta.env.VITE_PLAY_STORE_URL || 'https://play.google.com/store'
+
+const DEBUG_PREFIX = '[Pul Web]'
 
 const initialForm = {
   nombre: '',
@@ -73,27 +74,48 @@ function getInviteContext() {
         ? 'reservacion'
         : 'auto'
 
+  console.info(`${DEBUG_PREFIX} URL recibida`, {
+    href: url.href,
+    pathname: url.pathname,
+    search: url.search,
+    pathParts,
+    query: Object.fromEntries(url.searchParams.entries()),
+    explicitPlanId,
+    explicitDivisionId,
+    explicitEventId,
+    planIndex,
+    divisionIndex,
+    eventIndex,
+    normalizedType,
+  })
+
   if (explicitDivisionId || divisionIndex >= 0) {
-    return {
+    const context = {
       kind: 'division',
       id: explicitDivisionId || pathParts[divisionIndex + 1] || pathParts[0] || '',
       divisionType: normalizedType,
     }
+    console.info(`${DEBUG_PREFIX} Contexto detectado`, context)
+    return context
   }
 
   if (explicitEventId || eventIndex >= 0) {
-    return {
+    const context = {
       kind: 'event',
       id: explicitEventId || pathParts[eventIndex + 1] || pathParts[0] || '',
       divisionType: 'auto',
     }
+    console.info(`${DEBUG_PREFIX} Contexto detectado`, context)
+    return context
   }
 
-  return {
+  const context = {
     kind: 'plan',
     id: explicitPlanId || pathParts[planIndex + 1] || pathParts[0] || '',
     divisionType: 'auto',
   }
+  console.info(`${DEBUG_PREFIX} Contexto detectado`, context)
+  return context
 }
 
 function firestoreValueToJs(value) {
@@ -120,6 +142,8 @@ function firestoreValueToJs(value) {
 }
 
 function normalizeFirestoreDocument(document) {
+  if (!document?.fields) return document || {}
+
   const fields = document?.fields || {}
   return Object.fromEntries(
     Object.entries(fields).map(([key, value]) => [key, firestoreValueToJs(value)]),
@@ -370,53 +394,84 @@ function fallbackInvite(context) {
   }
 }
 
-async function fetchFirestoreDocument(collectionName, id) {
+async function fetchPublicInviteDocument(path, id, queryParams = {}) {
   const encodedId = encodeURIComponent(id)
-  const endpoint =
-    `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}` +
-    `/databases/(default)/documents/${collectionName}/${encodedId}?key=${FIREBASE_API_KEY}`
+  const endpoint = new URL(`${PUBLIC_INVITE_ENDPOINT}/${path}/${encodedId}`)
+  Object.entries(queryParams).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '' && value !== 'auto') {
+      endpoint.searchParams.set(key, value)
+    }
+  })
+
+  console.info(`${DEBUG_PREFIX} Consultando backend`, {
+    path,
+    id,
+    endpoint: endpoint.toString(),
+  })
 
   const response = await fetch(endpoint)
+  console.info(`${DEBUG_PREFIX} Respuesta backend`, {
+    path,
+    id,
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+  })
+
   if (!response.ok) {
-    throw new Error(`${collectionName} request failed with ${response.status}`)
+    const errorBody = await response.text()
+    console.error(`${DEBUG_PREFIX} Error backend`, {
+      path,
+      id,
+      status: response.status,
+      body: errorBody,
+    })
+    throw new Error(`${path} request failed with ${response.status}`)
   }
 
-  return response.json()
+  const payload = await response.json()
+  console.info(`${DEBUG_PREFIX} Documento recibido desde backend`, {
+    path,
+    id,
+    kind: payload.kind,
+    resourceType: payload.resourceType,
+    fieldKeys: Object.keys(payload.data || {}),
+  })
+
+  return payload
 }
 
 async function fetchInvite(context) {
+  console.info(`${DEBUG_PREFIX} Cargando invitacion`, context)
+
   if (context.kind === 'event') {
-    return normalizeEvent(await fetchFirestoreDocument('eventos', context.id), context.id)
+    const event = normalizeEvent(
+      (await fetchPublicInviteDocument('eventos', context.id)).data,
+      context.id,
+    )
+    console.info(`${DEBUG_PREFIX} Evento normalizado`, event)
+    return event
   }
 
   if (context.kind === 'plan') {
-    return normalizePlan(await fetchFirestoreDocument('planes', context.id), context.id)
+    const plan = normalizePlan(
+      (await fetchPublicInviteDocument('planes', context.id)).data,
+      context.id,
+    )
+    console.info(`${DEBUG_PREFIX} Plan normalizado`, plan)
+    return plan
   }
 
-  const collections =
-    context.divisionType === 'evento'
-      ? [['eventosUsers', 'evento']]
-      : context.divisionType === 'reservacion'
-        ? [['reservaciones', 'reservacion']]
-        : [
-            ['reservaciones', 'reservacion'],
-            ['eventosUsers', 'evento'],
-          ]
-
-  let lastError
-  for (const [collectionName, resourceType] of collections) {
-    try {
-      return normalizeDivision(
-        await fetchFirestoreDocument(collectionName, context.id),
-        context.id,
-        resourceType,
-      )
-    } catch (error) {
-      lastError = error
-    }
-  }
-
-  throw lastError
+  const payload = await fetchPublicInviteDocument('divisiones', context.id, {
+    type: context.divisionType,
+  })
+  const division = normalizeDivision(
+    payload.data,
+    context.id,
+    payload.resourceType || context.divisionType,
+  )
+  console.info(`${DEBUG_PREFIX} Division normalizada`, division)
+  return division
 }
 
 function buildDeepLink(base, params) {
@@ -547,17 +602,33 @@ function App() {
   )
 
   useEffect(() => {
-    if (!context.id) return
+    console.info(`${DEBUG_PREFIX} Estado de invitacion`, {
+      context,
+      inviteStatus,
+      invite,
+    })
+  }, [context, invite, inviteStatus])
+
+  useEffect(() => {
+    if (!context.id) {
+      console.warn(`${DEBUG_PREFIX} No hay ID en la URL`, context)
+      return
+    }
 
     let ignore = false
     fetchInvite(context)
       .then((data) => {
         if (ignore) return
+        console.info(`${DEBUG_PREFIX} Invitacion lista para render`, data)
         setInvite(data)
         setInviteStatus('ready')
       })
-      .catch(() => {
+      .catch((error) => {
         if (ignore) return
+        console.error(`${DEBUG_PREFIX} Usando fallback por error al cargar`, {
+          context,
+          error,
+        })
         setInvite(fallbackInvite(context))
         setInviteStatus('fallback')
       })
