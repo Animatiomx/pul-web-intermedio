@@ -359,20 +359,28 @@ button:disabled {
   background:
     linear-gradient(180deg, rgba(255, 70, 70, 0.06) 0%, rgba(82, 8, 37, 0.72) 100%),
     linear-gradient(135deg, #ff443f 0%, #c91572 55%, #8b0f49 100%);
+  background-position: center;
+  background-size: cover;
+}
+
+.plan-hero-content.has-image {
+  background-position: center;
+  background-size: cover;
 }
 
 .plan-emoji-badge {
-  width: 96px;
-  height: 96px;
+  width: auto;
+  height: auto;
   align-self: center;
   display: grid;
   place-items: center;
   margin: 6px 0 22px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 12px 26px rgba(42, 13, 27, 0.28);
-  font-size: 4.75rem;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+  font-size: 5.9rem;
+  line-height: 1;
 }
 
 .plan-emoji-badge img {
@@ -805,9 +813,9 @@ button:disabled {
   }
 
   .plan-emoji-badge {
-    width: 120px;
-    height: 120px;
-    font-size: 5.8rem;
+    width: auto;
+    height: auto;
+    font-size: 6.7rem;
   }
 
   .plan-info-strip > div {

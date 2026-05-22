@@ -1051,7 +1051,16 @@ function App() {
           <article className="plan-summary" aria-live="polite">
             {isPlan ? (
               <>
-                <div className="plan-hero-content">
+                <div
+                  className={`plan-hero-content ${heroImage ? 'has-image' : ''}`}
+                  style={
+                    heroImage
+                      ? {
+                          backgroundImage: `linear-gradient(180deg, rgba(255, 70, 70, 0.08) 0%, rgba(82, 8, 37, 0.76) 100%), url(${heroImage})`,
+                        }
+                      : undefined
+                  }
+                >
                   <div className="plan-emoji-badge" aria-hidden="true">
                     {invite.emoji || '⚽'}
                   </div>
