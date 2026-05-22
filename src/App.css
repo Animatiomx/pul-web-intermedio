@@ -358,7 +358,7 @@ button:disabled {
   color: #ffffff;
   background:
     linear-gradient(180deg, rgba(255, 70, 70, 0.06) 0%, rgba(82, 8, 37, 0.72) 100%),
-    linear-gradient(135deg, #ff443f 0%, #c91572 55%, #8b0f49 100%);
+    linear-gradient(135deg, var(--color-orange) 0%, #c91572 55%, #8b0f49 100%);
   background-position: center;
   background-size: cover;
 }
@@ -437,7 +437,7 @@ button:disabled {
   align-items: center;
   gap: 9px;
   padding: 0 max(20px, calc((100vw - 1120px) / 2));
-  color: #d55361;
+  color: var(--color-orange);
   font-weight: 900;
 }
 
@@ -446,7 +446,7 @@ button:disabled {
 }
 
 .plan-info-strip strong {
-  color: #d55361;
+  color: var(--color-orange);
   font-size: 1rem;
   line-height: 1.18;
 }
@@ -461,7 +461,7 @@ button:disabled {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 18px;
-  color: #d55361;
+  color: var(--color-orange);
   font-weight: 900;
 }
 
@@ -491,7 +491,7 @@ button:disabled {
   place-items: center;
   border-radius: 999px;
   border: 3px dashed #dddddf;
-  color: #e14b56;
+  color: var(--color-orange);
   background: #f7f7f8;
   font-size: 1.6rem;
   font-weight: 900;
@@ -516,7 +516,7 @@ button:disabled {
 }
 
 .participant-slot small {
-  color: #d55361;
+  color: var(--color-orange);
   font-size: 0.78rem;
   line-height: 1.05;
   font-weight: 900;
@@ -667,7 +667,7 @@ button:disabled {
   min-height: 32px;
   border-radius: 999px;
   padding: 0 12px;
-  color: #d55361;
+  color: var(--color-orange);
   background: rgba(213, 83, 97, 0.1);
   font-size: 0.86rem;
   box-shadow: none;
@@ -687,7 +687,7 @@ button:disabled {
   min-height: 72px;
   border-radius: 999px;
   font-size: 1.15rem;
-  background: linear-gradient(100deg, #ff443f 0%, #c91572 100%);
+  background: linear-gradient(100deg, var(--color-orange) 0%, #c91572 100%);
   box-shadow: 0 14px 24px rgba(201, 21, 114, 0.22);
 }
 
@@ -746,7 +746,7 @@ button:disabled {
   color: #ffffff;
   background:
     linear-gradient(180deg, rgba(255, 70, 70, 0.1) 0%, rgba(82, 8, 37, 0.76) 100%),
-    linear-gradient(135deg, #ff443f 0%, #c91572 55%, #8b0f49 100%);
+    linear-gradient(135deg, var(--color-orange) 0%, #c91572 55%, #8b0f49 100%);
   background-position: center;
   background-size: cover;
 }
@@ -779,7 +779,7 @@ button:disabled {
 }
 
 .plan-app-shell .section-copy .eyebrow {
-  color: #d55361;
+  color: var(--color-orange);
 }
 
 .plan-app-shell .section-copy h2 {
