@@ -4,8 +4,8 @@ import "./App.css";
 
 const APP_DEEP_LINK_BASE =
   import.meta.env.VITE_APP_DEEP_LINK_BASE || "pul://registro-express";
-const DIVISION_DEEP_LINK_BASE =
-  import.meta.env.VITE_DIVISION_DEEP_LINK_BASE || "pul://division-cuenta";
+const Reserva_DEEP_LINK_BASE =
+  import.meta.env.VITE_Reserva_DEEP_LINK_BASE || "pul://reserva-cuenta";
 const EVENT_DEEP_LINK_BASE =
   import.meta.env.VITE_EVENT_DEEP_LINK_BASE || "pul://evento-detalle";
 const LOGIN_DEEP_LINK_BASE =
@@ -26,8 +26,8 @@ const EMAIL_CONFIRMATION_ENDPOINT =
   `${BACKEND_URL}/email/send`;
 const PLAN_JOIN_ENDPOINT =
   import.meta.env.VITE_PLAN_JOIN_ENDPOINT || `${BACKEND_URL}/plans/join`;
-const DIVISION_RESPONSE_ENDPOINT =
-  import.meta.env.VITE_DIVISION_RESPONSE_ENDPOINT || "";
+const Reserva_RESPONSE_ENDPOINT =
+  import.meta.env.VITE_Reserva_RESPONSE_ENDPOINT || "";
 const APP_STORE_URL =
   import.meta.env.VITE_APP_STORE_URL || "https://www.apple.com/app-store/";
 const PLAY_STORE_URL =
@@ -62,8 +62,8 @@ function getInviteContext() {
     (pathParts.includes("plan")
       ? pathParts[pathParts.indexOf("plan") + 1]
       : "");
-  const explicitDivisionId =
-    url.searchParams.get("divisionId") ||
+  const explicitReservaId =
+    url.searchParams.get("reservaId") ||
     url.searchParams.get("reservaId") ||
     url.searchParams.get("eventoUserId") ||
     url.searchParams.get("inviteId");
@@ -74,8 +74,8 @@ function getInviteContext() {
   const planIndex = pathParts.findIndex((part) =>
     ["plan", "planes", "registro"].includes(part),
   );
-  const divisionIndex = pathParts.findIndex((part) =>
-    ["division", "cuenta", "split", "reservacion"].includes(part),
+  const reservaIndex = pathParts.findIndex((part) =>
+    ["reserva", "cuenta", "split", "reservacion"].includes(part),
   );
   const eventIndex = pathParts.findIndex((part) =>
     ["evento", "eventos", "event", "events"].includes(part),
@@ -96,23 +96,20 @@ function getInviteContext() {
     pathParts,
     query: Object.fromEntries(url.searchParams.entries()),
     explicitPlanId,
-    explicitDivisionId,
+    explicitReservaId,
     explicitEventId,
     planIndex,
-    divisionIndex,
+    reservaIndex,
     eventIndex,
     normalizedType,
   });
 
-  if (explicitDivisionId || divisionIndex >= 0) {
+  if (explicitReservaId || reservaIndex >= 0) {
     const context = {
-      kind: "division",
+      kind: "reserva",
       id:
-        explicitDivisionId ||
-        pathParts[divisionIndex + 1] ||
-        pathParts[0] ||
-        "",
-      divisionType: normalizedType,
+        explicitReservaId || pathParts[reservaIndex + 1] || pathParts[0] || "",
+      reservaType: normalizedType,
     };
     console.info(`${DEBUG_PREFIX} Contexto detectado`, context);
     return context;
@@ -122,7 +119,7 @@ function getInviteContext() {
     const context = {
       kind: "event",
       id: explicitEventId || pathParts[eventIndex + 1] || pathParts[0] || "",
-      divisionType: "auto",
+      reservaType: "auto",
     };
     console.info(`${DEBUG_PREFIX} Contexto detectado`, context);
     return context;
@@ -131,7 +128,7 @@ function getInviteContext() {
   const context = {
     kind: "plan",
     id: explicitPlanId || pathParts[planIndex + 1] || pathParts[0] || "",
-    divisionType: "auto",
+    reservaType: "auto",
   };
   console.info(`${DEBUG_PREFIX} Contexto detectado`, context);
   return context;
@@ -211,7 +208,7 @@ function normalizePlan(document, id) {
   };
 }
 
-function normalizeDivision(document, id, resourceType) {
+function normalizeReserva(document, id, resourceType) {
   const data = normalizeFirestoreDocument(document);
   const isEvent = resourceType === "evento";
   const event = data.evento || {};
@@ -233,7 +230,7 @@ function normalizeDivision(document, id, resourceType) {
 
   return {
     id: data.id || id,
-    kind: "division",
+    kind: "reserva",
     title,
     description:
       data.peticion ||
@@ -248,7 +245,7 @@ function normalizeDivision(document, id, resourceType) {
     capacity: data.personas || data.noPersonas || 0,
     members: dividers.length + 1,
     tags: [
-      "División de cuenta",
+      "Detalle de reserva",
       isEvent ? "Evento" : "Reservación",
       account.pagado ? "Pagado" : "Pago pendiente",
     ],
@@ -369,11 +366,11 @@ function fallbackInvite(context) {
     };
   }
 
-  if (context.kind === "division") {
+  if (context.kind === "reserva") {
     return {
       id: context.id,
-      kind: "division",
-      title: "División de cuenta",
+      kind: "reserva",
+      title: "Detalle de reserva",
       description:
         "Abre Pul o continúa en web para aceptar la invitación, pagar tu parte o rechazarla.",
       date: "",
@@ -385,7 +382,7 @@ function fallbackInvite(context) {
       hostImage: "",
       capacity: 0,
       members: 0,
-      tags: ["División de cuenta", "Pago con Stripe"],
+      tags: ["Detalle de reserva", "Pago con Stripe"],
       image: "",
       amount: 0,
       total: 0,
@@ -395,8 +392,7 @@ function fallbackInvite(context) {
       participants: null,
       payers: 0,
       refused: 0,
-      resourceType:
-        context.divisionType === "evento" ? "evento" : "reservacion",
+      resourceType: context.reservaType === "evento" ? "evento" : "reservacion",
       itemLabel: "Invitación compartida",
     };
   }
@@ -505,16 +501,16 @@ async function fetchInvite(context) {
     return plan;
   }
 
-  const payload = await fetchPublicInviteDocument("divisiones", context.id, {
-    type: context.divisionType,
+  const payload = await fetchPublicInviteDocument("reservaes", context.id, {
+    type: context.reservaType,
   });
-  const division = normalizeDivision(
+  const reserva = normalizeReserva(
     payload.data,
     context.id,
-    payload.resourceType || context.divisionType,
+    payload.resourceType || context.reservaType,
   );
-  console.info(`${DEBUG_PREFIX} Division normalizada`, division);
-  return division;
+  console.info(`${DEBUG_PREFIX} Reserva normalizada`, reserva);
+  return reserva;
 }
 
 function buildDeepLink(base, params) {
@@ -533,7 +529,7 @@ function isMobileBrowser() {
 
 function getDeepLinkBase(kind) {
   if (kind === "event") return EVENT_DEEP_LINK_BASE;
-  return kind === "division" ? DIVISION_DEEP_LINK_BASE : APP_DEEP_LINK_BASE;
+  return kind === "reserva" ? Reserva_DEEP_LINK_BASE : APP_DEEP_LINK_BASE;
 }
 
 function attemptOpenApp(invite, source = "auto") {
@@ -541,10 +537,10 @@ function attemptOpenApp(invite, source = "auto") {
 
   const deepLink = buildDeepLink(getDeepLinkBase(invite.kind), {
     planId: invite.kind === "plan" ? invite.id : undefined,
-    divisionId: invite.kind === "division" ? invite.id : undefined,
+    reservaId: invite.kind === "reserva" ? invite.id : undefined,
     eventId: invite.kind === "event" ? invite.id : undefined,
     id: invite.kind === "event" ? invite.id : undefined,
-    type: invite.kind === "division" ? invite.resourceType : undefined,
+    type: invite.kind === "reserva" ? invite.resourceType : undefined,
     source,
   });
 
@@ -768,7 +764,7 @@ function App() {
     };
   }, [context.id, invite]);
 
-  const isDivision = invite.kind === "division";
+  const isReserva = invite.kind === "reserva";
   const isEvent = invite.kind === "event";
   const isPlan = invite.kind === "plan";
   const purchasableItems = isEvent ? [...invite.tickets, ...invite.tables] : [];
@@ -783,7 +779,7 @@ function App() {
     ...new Set(
       [
         ...(Array.isArray(invite.tags) ? invite.tags : []),
-        isEvent ? "Evento" : isDivision ? "Reservación" : "Plan",
+        isEvent ? "Evento" : isReserva ? "Reservación" : "Plan",
         isPlan ? formatPlanVisibility(invite.visibility) : invite.host,
       ]
         .filter(Boolean)
@@ -866,7 +862,7 @@ function App() {
     sessionStorage.setItem("pulExpressUser", JSON.stringify(user));
     setAuthUser(user);
     setFlowStatus("authenticated");
-    setView(isDivision ? "payment" : isEvent ? "event-checkout" : "landing");
+    setView(isReserva ? "payment" : isEvent ? "event-checkout" : "landing");
     setPlanJoinMessage("");
   };
 
@@ -933,9 +929,9 @@ function App() {
     if (!invite.id) return;
     window.location.href = buildDeepLink(LOGIN_DEEP_LINK_BASE, {
       planId: invite.kind === "plan" ? invite.id : undefined,
-      divisionId: invite.kind === "division" ? invite.id : undefined,
+      reservaId: invite.kind === "reserva" ? invite.id : undefined,
       eventId: invite.kind === "event" ? invite.id : undefined,
-      type: invite.kind === "division" ? invite.resourceType : undefined,
+      type: invite.kind === "reserva" ? invite.resourceType : undefined,
       source: "express-login",
     });
   };
@@ -1078,7 +1074,7 @@ function App() {
   };
 
   const acceptAndPay = async () => {
-    if (!authUser || !isDivision) {
+    if (!authUser || !isReserva) {
       setView("register");
       return;
     }
@@ -1086,11 +1082,11 @@ function App() {
     setFlowStatus("paying");
     try {
       const result = await postJson(STRIPE_CHECKOUT_ENDPOINT, {
-        divisionId: invite.id,
+        reservaId: invite.id,
         type: invite.resourceType,
         amount: invite.amount,
         user: authUser,
-        successUrl: `${window.location.origin}${window.location.pathname}?divisionId=${invite.id}&type=${invite.resourceType}&payment=success`,
+        successUrl: `${window.location.origin}${window.location.pathname}?reservaId=${invite.id}&type=${invite.resourceType}&payment=success`,
         cancelUrl: window.location.href,
       });
 
@@ -1101,7 +1097,7 @@ function App() {
 
       await new Promise((resolve) => window.setTimeout(resolve, 900));
       sessionStorage.setItem(
-        `pulDivisionPayment:${invite.id}`,
+        `pulReservaPayment:${invite.id}`,
         JSON.stringify({ paidAt: new Date().toISOString(), user: authUser }),
       );
       setFlowStatus("paid");
@@ -1113,14 +1109,14 @@ function App() {
   const rejectInvitation = async () => {
     setFlowStatus("rejecting");
     try {
-      await postJson(DIVISION_RESPONSE_ENDPOINT, {
-        divisionId: invite.id,
+      await postJson(Reserva_RESPONSE_ENDPOINT, {
+        reservaId: invite.id,
         type: invite.resourceType,
         action: "reject",
         user: authUser,
       });
       sessionStorage.setItem(
-        `pulDivisionRejected:${invite.id}`,
+        `pulReservaRejected:${invite.id}`,
         JSON.stringify({
           rejectedAt: new Date().toISOString(),
           user: authUser,
@@ -1330,8 +1326,8 @@ function App() {
                   <p className="eyebrow">
                     {isEvent
                       ? "Evento compartido"
-                      : isDivision
-                        ? "División de cuenta"
+                      : isReserva
+                        ? "Detalle de reserva"
                         : "Registro Express"}
                   </p>
                   <h1>{invite.title}</h1>
@@ -1350,21 +1346,21 @@ function App() {
                     </strong>
                   </div>
                   <div>
-                    <span>{isDivision ? "Invita" : "Anfitrión"}</span>
+                    <span>{isReserva ? "Invita" : "Anfitrión"}</span>
                     <strong>{invite.host}</strong>
                   </div>
                   <div>
                     <span>
                       {isEvent
                         ? "Asistentes"
-                        : isDivision
+                        : isReserva
                           ? "Tu parte"
                           : "Lugares"}
                     </span>
                     <strong>
                       {isEvent
                         ? `${invite.members || 0}${invite.capacity ? ` / ${invite.capacity}` : ""}`
-                        : isDivision
+                        : isReserva
                           ? invite.amount > 0
                             ? formatCurrency(invite.amount)
                             : "Monto por confirmar"
@@ -1379,7 +1375,7 @@ function App() {
               </>
             )}
 
-            {isDivision && (
+            {isReserva && (
               <div className="payment-summary" aria-label="Resumen de cuenta">
                 <div>
                   <span>Total</span>
@@ -1448,7 +1444,7 @@ function App() {
                       Iniciar sesión
                     </button>
                   </>
-                ) : isDivision ? (
+                ) : isReserva ? (
                   <>
                     <button
                       className="primary-button"
@@ -1537,7 +1533,7 @@ function App() {
             )}
             <div className="floating-ticket">
               <span>
-                {isEvent ? "Evento ID" : isDivision ? "División ID" : "Plan ID"}
+                {isEvent ? "Evento ID" : isReserva ? "División ID" : "Plan ID"}
               </span>
               <strong>{invite.id || "sin-id"}</strong>
             </div>
@@ -1550,7 +1546,7 @@ function App() {
           <p className="eyebrow">
             {isEvent
               ? "Compra web"
-              : isDivision
+              : isReserva
                 ? "Pago seguro"
                 : "Fallback web"}
           </p>
@@ -1565,7 +1561,7 @@ function App() {
                     ? "Entra a tu cuenta"
                     : view === "guest-checkout" || view === "event-checkout"
                       ? "Selecciona tu compra"
-                      : isDivision
+                      : isReserva
                         ? "Acepta, paga o rechaza"
                         : isEvent
                           ? "Compra como invitado"
@@ -1574,7 +1570,7 @@ function App() {
           <p>
             {isEvent
               ? "Puedes comprar boletos o mesas sin iniciar sesión. Al finalizar, recibirás tu confirmación y QR por correo electrónico."
-              : isDivision
+              : isReserva
                 ? "Si la app no se abre, puedes autenticarte aquí y completar tu parte de la cuenta con Stripe."
                 : "Si la app no se abre, puedes iniciar sesión o dejar tu registro express para continuar el flujo asociado a este plan."}
           </p>
@@ -1823,7 +1819,7 @@ function App() {
                   ? "Creando cuenta..."
                   : isEvent
                     ? "Continuar a compra"
-                    : isDivision
+                    : isReserva
                       ? "Continuar al pago"
                       : "Crear cuenta"}
               </button>
@@ -1895,7 +1891,7 @@ function App() {
               </button>
             </div>
           </form>
-        ) : isDivision && authUser ? (
+        ) : isReserva && authUser ? (
           <div className="payment-card">
             <div>
               <span>Autenticado como</span>
