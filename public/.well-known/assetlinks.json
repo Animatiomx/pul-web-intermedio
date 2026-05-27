@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.animatiomx.pul",
+      "sha256_cert_fingerprints": [
+        "D9:81:98:F3:18:33:38:CA:09:45:17:BF:E6:1C:EC:DE:51:BB:64:3D:FB:29:E1:07:39:BD:97:B0:50:55:1C:9D"
+      ]
+    }
+  }
+]
