@@ -3,13 +3,15 @@ import logo from "./assets/logo.png";
 import "./App.css";
 
 const APP_DEEP_LINK_BASE =
-  import.meta.env.VITE_APP_DEEP_LINK_BASE || "pul://registro-express";
-const Reserva_DEEP_LINK_BASE =
-  import.meta.env.VITE_Reserva_DEEP_LINK_BASE || "pul://reserva-cuenta";
+  import.meta.env.VITE_APP_DEEP_LINK_BASE || "pul://plan";
+const RESERVA_DEEP_LINK_BASE =
+  import.meta.env.VITE_RESERVA_DEEP_LINK_BASE ||
+  import.meta.env.VITE_Reserva_DEEP_LINK_BASE ||
+  "pul://reserva";
+const EVENT_DETAIL_DEEP_LINK_BASE =
+  import.meta.env.VITE_EVENT_DETAIL_DEEP_LINK_BASE || "pul://eventodetalle";
 const EVENT_DEEP_LINK_BASE =
-  import.meta.env.VITE_EVENT_DEEP_LINK_BASE || "pul://evento-detalle";
-const LOGIN_DEEP_LINK_BASE =
-  import.meta.env.VITE_LOGIN_DEEP_LINK_BASE || "pul://login";
+  import.meta.env.VITE_EVENT_DEEP_LINK_BASE || "pul://evento";
 const FIREBASE_API_KEY =
   import.meta.env.VITE_FIREBASE_API_KEY ||
   "REDACTED_CREDENTIAL_09d5e8ea";
@@ -26,8 +28,10 @@ const EMAIL_CONFIRMATION_ENDPOINT =
   `${BACKEND_URL}/email/send`;
 const PLAN_JOIN_ENDPOINT =
   import.meta.env.VITE_PLAN_JOIN_ENDPOINT || `${BACKEND_URL}/plans/join`;
-const Reserva_RESPONSE_ENDPOINT =
-  import.meta.env.VITE_Reserva_RESPONSE_ENDPOINT || "";
+const RESERVA_RESPONSE_ENDPOINT =
+  import.meta.env.VITE_RESERVA_RESPONSE_ENDPOINT ||
+  import.meta.env.VITE_Reserva_RESPONSE_ENDPOINT ||
+  "";
 const APP_STORE_URL =
   import.meta.env.VITE_APP_STORE_URL || "https://www.apple.com/app-store/";
 const PLAY_STORE_URL =
@@ -56,6 +60,8 @@ const initialGuestForm = {
 function getInviteContext() {
   const url = new URL(window.location.href);
   const pathParts = url.pathname.split("/").filter(Boolean);
+  const findRouteIndex = (...routes) =>
+    pathParts.findIndex((part) => routes.includes(part));
   const explicitPlanId =
     url.searchParams.get("planId") ||
     url.searchParams.get("idPlan") ||
@@ -64,30 +70,31 @@ function getInviteContext() {
       : "");
   const explicitReservaId =
     url.searchParams.get("reservaId") ||
-    url.searchParams.get("reservaId") ||
-    url.searchParams.get("eventoUserId") ||
+    url.searchParams.get("divisionId") ||
     url.searchParams.get("inviteId");
+  const explicitEventDetailId =
+    url.searchParams.get("eventDetailId") ||
+    url.searchParams.get("detalleEventoId") ||
+    url.searchParams.get("eventoUserId");
   const explicitEventId =
     url.searchParams.get("eventId") ||
     url.searchParams.get("eventoId") ||
     url.searchParams.get("idEvento");
-  const planIndex = pathParts.findIndex((part) =>
-    ["plan", "planes", "registro"].includes(part),
+  const planIndex = findRouteIndex("plan", "planes", "registro");
+  const reservaIndex = findRouteIndex(
+    "detalle-reserva",
+    "detalle_reserva",
+    "reserva",
+    "cuenta",
+    "split",
+    "reservacion",
   );
-  const reservaIndex = pathParts.findIndex((part) =>
-    ["reserva", "cuenta", "split", "reservacion"].includes(part),
+  const eventDetailIndex = findRouteIndex(
+    "detalle-evento",
+    "detalle_evento",
+    "eventodetalle",
   );
-  const eventIndex = pathParts.findIndex((part) =>
-    ["evento", "eventos", "event", "events"].includes(part),
-  );
-  const typeParam =
-    url.searchParams.get("type") || url.searchParams.get("tipo") || "";
-  const normalizedType =
-    typeParam === "evento" || pathParts.includes("evento")
-      ? "evento"
-      : typeParam === "reservacion" || pathParts.includes("reservacion")
-        ? "reservacion"
-        : "auto";
+  const eventIndex = findRouteIndex("evento", "eventos", "event", "events");
 
   console.info(`${DEBUG_PREFIX} URL recibida`, {
     href: url.href,
@@ -97,11 +104,12 @@ function getInviteContext() {
     query: Object.fromEntries(url.searchParams.entries()),
     explicitPlanId,
     explicitReservaId,
+    explicitEventDetailId,
     explicitEventId,
     planIndex,
     reservaIndex,
+    eventDetailIndex,
     eventIndex,
-    normalizedType,
   });
 
   if (explicitReservaId || reservaIndex >= 0) {
@@ -109,7 +117,19 @@ function getInviteContext() {
       kind: "reserva",
       id:
         explicitReservaId || pathParts[reservaIndex + 1] || pathParts[0] || "",
-      reservaType: normalizedType,
+    };
+    console.info(`${DEBUG_PREFIX} Contexto detectado`, context);
+    return context;
+  }
+
+  if (explicitEventDetailId || eventDetailIndex >= 0) {
+    const context = {
+      kind: "eventDetail",
+      id:
+        explicitEventDetailId ||
+        pathParts[eventDetailIndex + 1] ||
+        pathParts[0] ||
+        "",
     };
     console.info(`${DEBUG_PREFIX} Contexto detectado`, context);
     return context;
@@ -119,7 +139,6 @@ function getInviteContext() {
     const context = {
       kind: "event",
       id: explicitEventId || pathParts[eventIndex + 1] || pathParts[0] || "",
-      reservaType: "auto",
     };
     console.info(`${DEBUG_PREFIX} Contexto detectado`, context);
     return context;
@@ -128,7 +147,6 @@ function getInviteContext() {
   const context = {
     kind: "plan",
     id: explicitPlanId || pathParts[planIndex + 1] || pathParts[0] || "",
-    reservaType: "auto",
   };
   console.info(`${DEBUG_PREFIX} Contexto detectado`, context);
   return context;
@@ -208,7 +226,7 @@ function normalizePlan(document, id) {
   };
 }
 
-function normalizeReserva(document, id, resourceType) {
+function normalizeReserva(document, id, resourceType = "reservacion") {
   const data = normalizeFirestoreDocument(document);
   const isEvent = resourceType === "evento";
   const event = data.evento || {};
@@ -265,7 +283,7 @@ function normalizeReserva(document, id, resourceType) {
   };
 }
 
-function normalizeEvent(document, id) {
+function normalizeEvent(document, id, kind = "event") {
   const data = normalizeFirestoreDocument(document);
   const tickets = Array.isArray(data.boletosTipo)
     ? data.boletosTipo.map((ticket) => ({
@@ -292,7 +310,7 @@ function normalizeEvent(document, id) {
 
   return {
     id: data.id || id,
-    kind: "event",
+    kind,
     title: data.nombre || "Evento Pul",
     description:
       data.descripcion ||
@@ -366,6 +384,40 @@ function fallbackInvite(context) {
     };
   }
 
+  if (context.kind === "eventDetail") {
+    return {
+      id: context.id,
+      kind: "eventDetail",
+      title: "Detalle de evento",
+      description:
+        "Abre Pul para ver todos los detalles de este evento compartido.",
+      date: "",
+      time: "",
+      endDate: "",
+      endTime: "",
+      address: "Información disponible dentro de Pul",
+      host: "Pul",
+      hostImage: "",
+      capacity: 0,
+      members: 0,
+      tags: ["Detalle de evento"],
+      image: "",
+      images: [],
+      amount: null,
+      total: null,
+      subtotal: null,
+      fee: null,
+      participants: null,
+      resourceType: "evento",
+      tickets: [],
+      tables: [],
+      schedule: "",
+      rules: "",
+      details: "",
+      periodicity: [],
+    };
+  }
+
   if (context.kind === "reserva") {
     return {
       id: context.id,
@@ -392,7 +444,7 @@ function fallbackInvite(context) {
       participants: null,
       payers: 0,
       refused: 0,
-      resourceType: context.reservaType === "evento" ? "evento" : "reservacion",
+      resourceType: "reservacion",
       itemLabel: "Invitación compartida",
     };
   }
@@ -492,6 +544,16 @@ async function fetchInvite(context) {
     return event;
   }
 
+  if (context.kind === "eventDetail") {
+    const eventDetail = normalizeEvent(
+      (await fetchPublicInviteDocument("eventosUsers", context.id)).data,
+      context.id,
+      "eventDetail",
+    );
+    console.info(`${DEBUG_PREFIX} Detalle de evento normalizado`, eventDetail);
+    return eventDetail;
+  }
+
   if (context.kind === "plan") {
     const plan = normalizePlan(
       (await fetchPublicInviteDocument("planes", context.id)).data,
@@ -501,26 +563,14 @@ async function fetchInvite(context) {
     return plan;
   }
 
-  const payload = await fetchPublicInviteDocument("reservaes", context.id, {
-    type: context.reservaType,
-  });
+  const payload = await fetchPublicInviteDocument("reserva", context.id);
   const reserva = normalizeReserva(
     payload.data,
     context.id,
-    payload.resourceType || context.reservaType,
+    payload.resourceType || "reservacion",
   );
   console.info(`${DEBUG_PREFIX} Reserva normalizada`, reserva);
   return reserva;
-}
-
-function buildDeepLink(base, params) {
-  const url = new URL(base);
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      url.searchParams.set(key, value);
-    }
-  });
-  return url.toString();
 }
 
 function isMobileBrowser() {
@@ -529,21 +579,31 @@ function isMobileBrowser() {
 
 function getDeepLinkBase(kind) {
   if (kind === "event") return EVENT_DEEP_LINK_BASE;
-  return kind === "reserva" ? Reserva_DEEP_LINK_BASE : APP_DEEP_LINK_BASE;
+  if (kind === "eventDetail") return EVENT_DETAIL_DEEP_LINK_BASE;
+  return kind === "reserva" ? RESERVA_DEEP_LINK_BASE : APP_DEEP_LINK_BASE;
+}
+
+function buildRouteDeepLink(base, id) {
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  return `${normalizedBase}${encodeURIComponent(id)}`;
+}
+
+function getInviteDeepLink(invite) {
+  if (!invite.id) return;
+
+  return buildRouteDeepLink(getDeepLinkBase(invite.kind), invite.id);
 }
 
 function attemptOpenApp(invite, source = "auto") {
-  if (!invite.id) return;
+  const deepLink = getInviteDeepLink(invite);
+  if (!deepLink) return;
 
-  const deepLink = buildDeepLink(getDeepLinkBase(invite.kind), {
-    planId: invite.kind === "plan" ? invite.id : undefined,
-    reservaId: invite.kind === "reserva" ? invite.id : undefined,
-    eventId: invite.kind === "event" ? invite.id : undefined,
-    id: invite.kind === "event" ? invite.id : undefined,
-    type: invite.kind === "reserva" ? invite.resourceType : undefined,
+  console.info(`${DEBUG_PREFIX} Abriendo app con deep link`, {
+    kind: invite.kind,
+    id: invite.id,
     source,
+    deepLink,
   });
-
   window.location.href = deepLink;
 }
 
@@ -741,30 +801,40 @@ function App() {
   }, [context]);
 
   useEffect(() => {
-    if (!context.id || !isMobileBrowser()) return;
+    if (!context.id || !isMobileBrowser() || inviteStatus === "loading") return;
 
     const timeoutId = window.setTimeout(() => {
       attemptOpenApp(invite);
     }, 450);
 
     const fallbackId = window.setTimeout(() => {
-      if (!document.hidden) setAppPrompt("fallback");
+      if (!document.hidden && document.hasFocus()) setAppPrompt("fallback");
     }, 1800);
 
+    const markAsOpened = () => {
+      setAppPrompt("opened");
+    };
+
     const onVisibilityChange = () => {
-      if (document.hidden) setAppPrompt("opened");
+      if (document.hidden) markAsOpened();
     };
 
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("blur", markAsOpened);
+    window.addEventListener("pagehide", markAsOpened);
 
     return () => {
       window.clearTimeout(timeoutId);
       window.clearTimeout(fallbackId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("blur", markAsOpened);
+      window.removeEventListener("pagehide", markAsOpened);
     };
-  }, [context.id, invite]);
+  }, [context.id, invite, inviteStatus]);
 
   const isReserva = invite.kind === "reserva";
+  const isEventDetail = invite.kind === "eventDetail";
+  const usesReservaLayout = isReserva || isEventDetail;
   const isEvent = invite.kind === "event";
   const isPlan = invite.kind === "plan";
   const purchasableItems = isEvent ? [...invite.tickets, ...invite.tables] : [];
@@ -779,7 +849,7 @@ function App() {
     ...new Set(
       [
         ...(Array.isArray(invite.tags) ? invite.tags : []),
-        isEvent ? "Evento" : isReserva ? "Reservación" : "Plan",
+        isEvent ? "Evento" : isEventDetail ? "Detalle de evento" : isReserva ? "Reservacion" : "Plan",
         isPlan ? formatPlanVisibility(invite.visibility) : invite.host,
       ]
         .filter(Boolean)
@@ -926,14 +996,7 @@ function App() {
   };
 
   const openLoginInApp = () => {
-    if (!invite.id) return;
-    window.location.href = buildDeepLink(LOGIN_DEEP_LINK_BASE, {
-      planId: invite.kind === "plan" ? invite.id : undefined,
-      reservaId: invite.kind === "reserva" ? invite.id : undefined,
-      eventId: invite.kind === "event" ? invite.id : undefined,
-      type: invite.kind === "reserva" ? invite.resourceType : undefined,
-      source: "express-login",
-    });
+    attemptOpenApp(invite, "express-login");
   };
 
   const sendTicketEmail = async (purchase) => {
@@ -1083,10 +1146,9 @@ function App() {
     try {
       const result = await postJson(STRIPE_CHECKOUT_ENDPOINT, {
         reservaId: invite.id,
-        type: invite.resourceType,
         amount: invite.amount,
         user: authUser,
-        successUrl: `${window.location.origin}${window.location.pathname}?reservaId=${invite.id}&type=${invite.resourceType}&payment=success`,
+        successUrl: `${window.location.origin}${window.location.pathname}?reservaId=${invite.id}&payment=success`,
         cancelUrl: window.location.href,
       });
 
@@ -1109,9 +1171,8 @@ function App() {
   const rejectInvitation = async () => {
     setFlowStatus("rejecting");
     try {
-      await postJson(Reserva_RESPONSE_ENDPOINT, {
+      await postJson(RESERVA_RESPONSE_ENDPOINT, {
         reservaId: invite.id,
-        type: invite.resourceType,
         action: "reject",
         user: authUser,
       });
@@ -1147,7 +1208,7 @@ function App() {
               type="button"
               onClick={() => window.history.back()}
             >
-              ←
+              ?
             </button>
           </nav>
         ) : (
@@ -1186,7 +1247,7 @@ function App() {
                       <span key={tag}>#{tag}</span>
                     ))}
                     <span>
-                      ⌖{" "}
+                      ?{" "}
                       {invite.address
                         ? invite.address.split(",")[0]
                         : "Ubicación por confirmar"}
@@ -1199,11 +1260,11 @@ function App() {
 
                 <div className="plan-info-strip">
                   <div>
-                    <span>◷</span>
+                    <span>?</span>
                     <strong>{formatInviteDate(invite)}</strong>
                   </div>
                   <div>
-                    <span>♙</span>
+                    <span>?</span>
                     <strong>
                       {spotsLeft === null
                         ? "Lugares por confirmar"
@@ -1287,7 +1348,7 @@ function App() {
                   <h2>Dónde</h2>
                   <div className="location-card">
                     <div className="fake-map" aria-hidden="true">
-                      <span className="map-pin">●</span>
+                      <span className="map-pin">?</span>
                       <span className="google-label">Google</span>
                     </div>
                     <div>
@@ -1299,7 +1360,7 @@ function App() {
                         type="button"
                         onClick={() => attemptOpenApp(invite, "location")}
                       >
-                        ᐅ 14 km · Abrir ubicación
+                        ? 14 km · Abrir ubicación
                       </button>
                     </div>
                   </div>
@@ -1324,11 +1385,7 @@ function App() {
                   }
                 >
                   <p className="eyebrow">
-                    {isEvent
-                      ? "Evento compartido"
-                      : isReserva
-                        ? "Detalle de reserva"
-                        : "Registro Express"}
+                    {isEvent ? "Evento compartido" : isEventDetail ? "Detalle de evento" : isReserva ? "Detalle de reserva" : "Registro Express"}
                   </p>
                   <h1>{invite.title}</h1>
                 </div>
@@ -1346,22 +1403,19 @@ function App() {
                     </strong>
                   </div>
                   <div>
-                    <span>{isReserva ? "Invita" : "Anfitrión"}</span>
+                    <span>{usesReservaLayout ? "Invita" : "Anfitrion"}</span>
                     <strong>{invite.host}</strong>
                   </div>
                   <div>
                     <span>
                       {isEvent
                         ? "Asistentes"
-                        : isReserva
-                          ? "Tu parte"
-                          : "Lugares"}
+                        : isEventDetail ? "Asistentes" : isReserva ? "Tu parte" : "Lugares"}
                     </span>
                     <strong>
                       {isEvent
                         ? `${invite.members || 0}${invite.capacity ? ` / ${invite.capacity}` : ""}`
-                        : isReserva
-                          ? invite.amount > 0
+                        : isEventDetail ? `${invite.members || 0}${invite.capacity ? ` / ${invite.capacity}` : ""}` : isReserva ? invite.amount > 0
                             ? formatCurrency(invite.amount)
                             : "Monto por confirmar"
                           : spotsLeft === null
@@ -1442,6 +1496,16 @@ function App() {
                       onClick={() => setView("login")}
                     >
                       Iniciar sesión
+                    </button>
+                  </>
+                ) : isEventDetail ? (
+                  <>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => attemptOpenApp(invite, "manual-open")}
+                    >
+                      Abrir evento en app
                     </button>
                   </>
                 ) : isReserva ? (
@@ -1533,7 +1597,7 @@ function App() {
             )}
             <div className="floating-ticket">
               <span>
-                {isEvent ? "Evento ID" : isReserva ? "División ID" : "Plan ID"}
+                {isEvent ? "Evento ID" : isEventDetail ? "Detalle evento ID" : isReserva ? "Reserva ID" : "Plan ID"}
               </span>
               <strong>{invite.id || "sin-id"}</strong>
             </div>
@@ -1546,9 +1610,11 @@ function App() {
           <p className="eyebrow">
             {isEvent
               ? "Compra web"
-              : isReserva
-                ? "Pago seguro"
-                : "Fallback web"}
+              : isEventDetail
+                ? "Detalle en app"
+                : isReserva
+                  ? "Pago seguro"
+                  : "Fallback web"}
           </p>
           <h2>
             {flowStatus === "event-paid"
@@ -1561,18 +1627,22 @@ function App() {
                     ? "Entra a tu cuenta"
                     : view === "guest-checkout" || view === "event-checkout"
                       ? "Selecciona tu compra"
-                      : isReserva
-                        ? "Acepta, paga o rechaza"
-                        : isEvent
-                          ? "Compra como invitado"
-                          : "Continúa como prefieras"}
+                      : isEventDetail
+                        ? "Abre el detalle en Pul"
+                        : isReserva
+                          ? "Acepta, paga o rechaza"
+                          : isEvent
+                            ? "Compra como invitado"
+                            : "Continua como prefieras"}
           </h2>
           <p>
             {isEvent
-              ? "Puedes comprar boletos o mesas sin iniciar sesión. Al finalizar, recibirás tu confirmación y QR por correo electrónico."
-              : isReserva
-                ? "Si la app no se abre, puedes autenticarte aquí y completar tu parte de la cuenta con Stripe."
-                : "Si la app no se abre, puedes iniciar sesión o dejar tu registro express para continuar el flujo asociado a este plan."}
+              ? "Puedes comprar boletos o mesas sin iniciar sesion. Al finalizar, recibiras tu confirmacion y QR por correo electronico."
+              : isEventDetail
+                ? "Abre Pul para ver el detalle completo del evento en la app."
+                : isReserva
+                  ? "Si la app no se abre, puedes autenticarte aqui y completar tu parte de la cuenta con Stripe."
+                  : "Si la app no se abre, puedes iniciar sesion o dejar tu registro express para continuar el flujo asociado a este plan."}
           </p>
         </div>
 
@@ -1937,6 +2007,18 @@ function App() {
                 No se pudo registrar el rechazo. Intenta de nuevo.
               </p>
             )}
+          </div>
+        ) : isEventDetail ? (
+          <div className="confirmation-panel muted">
+            <strong>Detalle de evento</strong>
+            <p>Abre Pul para ver este evento en la app.</p>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => attemptOpenApp(invite, "manual-open")}
+            >
+              Abrir evento en app
+            </button>
           </div>
         ) : isPlan && authUser ? (
           <div className="payment-card">
