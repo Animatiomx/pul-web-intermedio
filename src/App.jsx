@@ -28,6 +28,8 @@ const EMAIL_CONFIRMATION_ENDPOINT =
   `${BACKEND_URL}/email/send`;
 const PLAN_JOIN_ENDPOINT =
   import.meta.env.VITE_PLAN_JOIN_ENDPOINT || `${BACKEND_URL}/plans/join`;
+const PLAN_LEAVE_ENDPOINT =
+  import.meta.env.VITE_PLAN_LEAVE_ENDPOINT || `${BACKEND_URL}/plans/leave`;
 const RESERVA_RESPONSE_ENDPOINT =
   import.meta.env.VITE_RESERVA_RESPONSE_ENDPOINT ||
   import.meta.env.VITE_Reserva_RESPONSE_ENDPOINT ||
@@ -56,6 +58,47 @@ const initialGuestForm = {
   email: "",
   telefono: "",
 };
+
+function getUserId(user) {
+  return user?.id || user?.uid || user?.userId || "";
+}
+
+function normalizeUserSummary(value, fallbackId = "") {
+  if (value && typeof value === "object") {
+    const id = getUserId(value) || fallbackId;
+    return {
+      id,
+      nombre:
+        value.nombre ||
+        value.name ||
+        value.displayName ||
+        value.email ||
+        id ||
+        "Pul",
+      imagen: value.imagen || value.image || value.avatar || value.foto || "",
+      email: value.email || "",
+    };
+  }
+
+  const id = String(value || fallbackId || "");
+  return {
+    id,
+    nombre: id ? `Usuario ${id.slice(0, 5)}` : "Usuario Pul",
+    imagen: "",
+    email: "",
+  };
+}
+
+function getUniqueIds(values = []) {
+  return [
+    ...new Set(
+      values
+        .map((value) => (typeof value === "object" ? getUserId(value) : value))
+        .filter(Boolean)
+        .map(String),
+    ),
+  ];
+}
 
 function getInviteContext() {
   const url = new URL(window.location.href);
@@ -191,7 +234,18 @@ function normalizePlan(document, id) {
   const data = normalizeFirestoreDocument(document);
   const integrantes = Array.isArray(data.integrantes) ? data.integrantes : [];
   const solicitudes = Array.isArray(data.solicitudes) ? data.solicitudes : [];
+  const host = normalizeUserSummary(data.anfitrion, data.anfitrion?.id || "");
+  const integrantesIds = getUniqueIds(integrantes);
+  const solicitudesIds = getUniqueIds(solicitudes);
+  const integrantesUsers = integrantes
+    .filter((item) => item && typeof item === "object")
+    .map((item) => normalizeUserSummary(item));
   const miembros = Number(data.integrantesCount ?? integrantes.length ?? 0);
+  const attendees = integrantesUsers.length
+    ? integrantesUsers
+    : integrantesIds.map((memberId) =>
+        memberId === host.id ? host : normalizeUserSummary(memberId),
+      );
 
   return {
     id: data.id || id,
@@ -206,17 +260,22 @@ function normalizePlan(document, id) {
     endDate: data.fechaFin || "",
     endTime: data.horaFin || "",
     address: data.direccion || data.linkedEntity?.address || "",
-    host: data.anfitrion?.nombre || "Anfitrión Pul",
-    hostId: data.anfitrion?.id || "",
-    hostImage: data.anfitrion?.imagen || "",
-    capacity: data.personas || 0,
+    host: host.nombre || "Anfitrión Pul",
+    hostId: host.id || "",
+    hostImage: host.imagen || "",
+    hostUser: host,
+    capacity: Number(data.personas || 0),
     members: miembros,
     requests: Number(data.solicitudesCount ?? solicitudes.length ?? 0),
     visibility: data.visibilidad || "amigos",
     status: data.estatus || "",
-    emoji: data.emoji || "⚽",
+    emoji: data.emoji || "?",
     tags: data.hashtags || data.tags || data.tendencias?.tags || [],
     image: data.linkedEntity?.image || data.anfitrion?.imagen || "",
+    integrantesIds,
+    solicitudesIds,
+    attendees,
+    coordinates: data.coordenadas || data.coordinates || null,
     amount: null,
     total: null,
     subtotal: null,
@@ -242,7 +301,7 @@ function normalizeReserva(document, id, resourceType = "reservacion") {
       : "División de reservación";
   const itemLabel = isEvent
     ? data.mesa?.tipoMesa
-      ? `${data.mesa.zona || "Zona"} · Mesa ${data.mesa.noMesa || ""}`.trim()
+      ? `${data.mesa.zona || "Zona"} ? Mesa ${data.mesa.noMesa || ""}`.trim()
       : data.boleto?.nombre || "Boleto de evento"
     : data.mesa?.nombre || data.mesa?.zona || "Reservación";
 
@@ -468,7 +527,7 @@ function fallbackInvite(context) {
     requests: 0,
     visibility: "",
     status: "",
-    emoji: "⚽",
+    emoji: "?",
     tags: ["Registro express", "Plan compartido"],
     image: "",
     amount: null,
@@ -608,8 +667,8 @@ function attemptOpenApp(invite, source = "auto") {
 }
 
 function formatInviteDate(invite) {
-  const date = [invite.date, invite.time].filter(Boolean).join(" · ");
-  const end = [invite.endDate, invite.endTime].filter(Boolean).join(" · ");
+  const date = [invite.date, invite.time].filter(Boolean).join(" ? ");
+  const end = [invite.endDate, invite.endTime].filter(Boolean).join(" ? ");
   if (date && end) return `${date} a ${end}`;
   return date || "Fecha por confirmar";
 }
@@ -629,13 +688,492 @@ function formatPlanVisibility(value) {
   return "Plan público";
 }
 
+function formatPlanDate(dateString, timeString) {
+  if (!dateString) return "Por confirmar";
+  const safeDate = new Date(`${dateString}T12:00:00`);
+  const formatted = Number.isNaN(safeDate.getTime())
+    ? dateString
+    : new Intl.DateTimeFormat("es-MX", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "2-digit",
+      }).format(safeDate);
+  return [formatted, timeString?.slice?.(0, 5)].filter(Boolean).join(" · ");
+}
+
+function UserAvatar({ user, size = "md" }) {
+  const initial = (user?.nombre || user?.email || "P")
+    .slice(0, 1)
+    .toUpperCase();
+
+  return (
+    <span className={`user-avatar ${size}`}>
+      {user?.imagen ? <img src={user.imagen} alt="" /> : initial}
+    </span>
+  );
+}
+
+function PlanSection({ icon, title, children, action }) {
+  return (
+    <section className="plan-web-section">
+      <div className="plan-web-section-head">
+        <span className="plan-web-icon" aria-hidden="true">
+          {icon}
+        </span>
+        <h2>{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function PlanAuthPanel({
+  view,
+  setView,
+  errors,
+  registerForm,
+  loginForm,
+  onRegisterFieldChange,
+  onLoginFieldChange,
+  onRegisterSubmit,
+  onLoginSubmit,
+  flowStatus,
+}) {
+  if (view === "register") {
+    return (
+      <form className="plan-auth-card" onSubmit={onRegisterSubmit} noValidate>
+        <div>
+          <span>Registro rápido</span>
+          <strong>Crea tu cuenta para continuar</strong>
+        </div>
+        <label>
+          <span>Nombre</span>
+          <input
+            name="nombre"
+            value={registerForm.nombre}
+            onChange={onRegisterFieldChange}
+          />
+          {errors.nombre && <small>{errors.nombre}</small>}
+        </label>
+        <label>
+          <span>Email</span>
+          <input
+            name="email"
+            type="email"
+            value={registerForm.email}
+            onChange={onRegisterFieldChange}
+          />
+          {errors.email && <small>{errors.email}</small>}
+        </label>
+        <label>
+          <span>Teléfono</span>
+          <input
+            name="telefono"
+            type="tel"
+            value={registerForm.telefono}
+            onChange={onRegisterFieldChange}
+          />
+          {errors.telefono && <small>{errors.telefono}</small>}
+        </label>
+        <label>
+          <span>Contraseña</span>
+          <input
+            name="password"
+            type="password"
+            value={registerForm.password}
+            onChange={onRegisterFieldChange}
+          />
+          {errors.password && <small>{errors.password}</small>}
+        </label>
+        {errors.form && <p className="status-note error-note">{errors.form}</p>}
+        <button
+          className="primary-button"
+          disabled={flowStatus === "registering"}
+          type="submit"
+        >
+          {flowStatus === "registering" ? "Creando cuenta..." : "Crear cuenta"}
+        </button>
+        <button
+          className="ghost-button"
+          type="button"
+          onClick={() => setView("login")}
+        >
+          Ya tengo cuenta
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <form className="plan-auth-card" onSubmit={onLoginSubmit} noValidate>
+      <div>
+        <span>Login rápido</span>
+        <strong>Entra para unirte al plan</strong>
+      </div>
+      <label>
+        <span>Email</span>
+        <input
+          name="email"
+          type="email"
+          value={loginForm.email}
+          onChange={onLoginFieldChange}
+        />
+        {errors.email && <small>{errors.email}</small>}
+      </label>
+      <label>
+        <span>Contraseña</span>
+        <input
+          name="password"
+          type="password"
+          value={loginForm.password}
+          onChange={onLoginFieldChange}
+        />
+        {errors.password && <small>{errors.password}</small>}
+      </label>
+      {errors.form && <p className="status-note error-note">{errors.form}</p>}
+      <button
+        className="primary-button"
+        disabled={flowStatus === "logging-in"}
+        type="submit"
+      >
+        {flowStatus === "logging-in" ? "Iniciando sesión..." : "Iniciar sesión"}
+      </button>
+      <button
+        className="ghost-button"
+        type="button"
+        onClick={() => setView("register")}
+      >
+        Registro rápido
+      </button>
+    </form>
+  );
+}
+
+function PlanWebView({
+  invite,
+  inviteStatus,
+  authUser,
+  onLogout,
+  flowStatus,
+  planJoinMessage,
+  view,
+  setView,
+  errors,
+  registerForm,
+  loginForm,
+  onRegisterFieldChange,
+  onLoginFieldChange,
+  onRegisterSubmit,
+  onLoginSubmit,
+  joinCurrentPlan,
+  leaveCurrentPlan,
+  attemptOpenApp,
+}) {
+  const [attendeesOpen, setAttendeesOpen] = useState(false);
+  const [attendeeSearch, setAttendeeSearch] = useState("");
+  const userId = getUserId(authUser);
+  const memberIds = invite.integrantesIds || [];
+  const requestIds = invite.solicitudesIds || [];
+  const isHost = Boolean(userId && userId === invite.hostId);
+  const isMember = Boolean(userId && memberIds.includes(userId));
+  const isPending = Boolean(userId && requestIds.includes(userId));
+  const capacity = Number(invite.capacity || 0);
+  const memberCount = Number(invite.members || memberIds.length || 0);
+  const spotsLeft = capacity > 0 ? Math.max(capacity - memberCount, 0) : null;
+  const isFull = spotsLeft === 0;
+  const attendees = invite.attendees?.length
+    ? invite.attendees
+    : [
+        invite.hostUser,
+        ...memberIds.map((id) => normalizeUserSummary(id)),
+      ].filter(Boolean);
+  const visibleAttendees = attendees.filter((user) =>
+    `${user?.nombre || ""} ${user?.email || ""}`
+      .toLowerCase()
+      .includes(attendeeSearch.toLowerCase()),
+  );
+  const mapQuery = encodeURIComponent(invite.address || invite.title || "Pul");
+  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
+  const actionText = isHost
+    ? "Eres anfitrión"
+    : isPending || flowStatus === "plan-requested"
+      ? "Solicitud enviada"
+      : isMember
+        ? "Salirse del plan"
+        : isFull
+          ? "Unirse a lista de espera"
+          : "Unirse al plan";
+
+  return (
+    <main className="plan-web-shell">
+      <nav className="plan-web-topbar" aria-label="Plan">
+        <button
+          className="round-icon-button"
+          type="button"
+          onClick={() => window.history.back()}
+        >
+          ?
+        </button>
+        <img src={logo} alt="Pul" className="brand-logo" />
+        <button
+          className="ghost-button compact"
+          type="button"
+          onClick={() => attemptOpenApp(invite, "manual-open")}
+        >
+          Abrir app
+        </button>
+      </nav>
+
+      <section className="plan-web-hero">
+        <div className="plan-web-hero-card">
+          <div className="plan-web-emoji" aria-hidden="true">
+            {invite.emoji || "⚽"}
+          </div>
+          <p className="eyebrow">{formatPlanVisibility(invite.visibility)}</p>
+          <h1>{invite.title}</h1>
+          <p>
+            {invite.description || "Este plan no tiene descripción adicional."}
+          </p>
+          <div className="plan-web-host-card">
+            <UserAvatar user={invite.hostUser} size="lg" />
+            <div>
+              <span>ANFITRIÓN</span>
+              <strong>{invite.host}</strong>
+            </div>
+          </div>
+        </div>
+        <aside className="plan-web-action-card">
+          <div className="plan-web-capacity">
+            <span>{memberCount}</span>
+            <p>de {capacity || "?"} personas</p>
+            {spotsLeft !== null && (
+              <strong>
+                {spotsLeft > 0 ? `${spotsLeft} disponibles` : "Lista llena"}
+              </strong>
+            )}
+          </div>
+          {authUser ? (
+            <>
+              <button
+                className={isMember ? "secondary-button" : "primary-button"}
+                type="button"
+                onClick={isMember ? leaveCurrentPlan : joinCurrentPlan}
+                disabled={
+                  isHost ||
+                  isPending ||
+                  flowStatus === "joining-plan" ||
+                  flowStatus === "leaving-plan"
+                }
+              >
+                {flowStatus === "joining-plan" || flowStatus === "leaving-plan"
+                  ? "Actualizando..."
+                  : actionText}
+              </button>
+              <p className="plan-web-user-note">
+                Sesión iniciada como <strong>{authUser.email}</strong>
+              </p>
+              <button
+                className="text-button plan-logout-button"
+                type="button"
+                onClick={onLogout}
+              >
+                Cerrar sesión
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => setView("register")}
+              >
+                Registrarme para unirme
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setView("login")}
+              >
+                Iniciar sesión
+              </button>
+            </>
+          )}
+          {planJoinMessage && (
+            <p
+              className={`status-note ${flowStatus === "plan-join-error" ? "error-note" : "success-note"}`}
+            >
+              {planJoinMessage}
+            </p>
+          )}
+          {inviteStatus === "loading" && <div className="plan-web-skeleton" />}
+        </aside>
+      </section>
+
+      <section className="plan-web-content">
+        {!authUser && (view === "register" || view === "login") && (
+          <div className="plan-web-mobile-auth">
+            <PlanAuthPanel
+              view={view}
+              setView={setView}
+              errors={errors}
+              registerForm={registerForm}
+              loginForm={loginForm}
+              onRegisterFieldChange={onRegisterFieldChange}
+              onLoginFieldChange={onLoginFieldChange}
+              onRegisterSubmit={onRegisterSubmit}
+              onLoginSubmit={onLoginSubmit}
+              flowStatus={flowStatus}
+            />
+          </div>
+        )}
+
+        <div className="plan-web-main">
+          <PlanSection icon="⏱" title="Fecha y hora">
+            <div className="plan-web-timeline">
+              <div>
+                <span>COMIENZA</span>
+                <strong>{formatPlanDate(invite.date, invite.time)}</strong>
+              </div>
+              <div>
+                <span>TERMINA</span>
+                <strong>
+                  {formatPlanDate(invite.endDate, invite.endTime)}
+                </strong>
+              </div>
+            </div>
+          </PlanSection>
+
+          <PlanSection icon="📍" title="Ubicación">
+            <div className="plan-web-map-card">
+              <div className="fake-map premium" aria-hidden="true">
+                <span className="map-pin" />
+              </div>
+              <div>
+                <strong>{invite.address || "Ubicación por confirmar"}</strong>
+                <a
+                  className="map-link"
+                  href={mapUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Ir
+                </a>
+              </div>
+            </div>
+          </PlanSection>
+
+          <PlanSection icon="✦" title="Descripción">
+            <div className="plan-web-description">
+              {invite.description ||
+                "Este plan no tiene descripción adicional."}
+            </div>
+          </PlanSection>
+
+          <PlanSection
+            icon="ðŸ‘¥"
+            title="Asistentes"
+            action={
+              attendees.length > 5 ? (
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => setAttendeesOpen(true)}
+                >
+                  Ver todos
+                </button>
+              ) : null
+            }
+          >
+            <div className="plan-web-attendees">
+              {attendees.slice(0, 8).map((user) => (
+                <div className="plan-web-attendee" key={user.id || user.nombre}>
+                  <UserAvatar user={user} />
+                  <span>{user.nombre}</span>
+                </div>
+              ))}
+              {!attendees.length && (
+                <p className="empty-attendees">
+                  Aún no hay asistentes a este plan.
+                </p>
+              )}
+            </div>
+          </PlanSection>
+        </div>
+
+        <aside className="plan-web-side">
+          {!authUser && (view === "register" || view === "login") && (
+            <div className="plan-web-desktop-auth">
+              <PlanAuthPanel
+                view={view}
+                setView={setView}
+                errors={errors}
+                registerForm={registerForm}
+                loginForm={loginForm}
+                onRegisterFieldChange={onRegisterFieldChange}
+                onLoginFieldChange={onLoginFieldChange}
+                onRegisterSubmit={onRegisterSubmit}
+                onLoginSubmit={onLoginSubmit}
+                flowStatus={flowStatus}
+              />
+            </div>
+          )}
+          <div className="plan-web-mini-card">
+            <span>Estado</span>
+            <strong>{invite.status || "Activo"}</strong>
+            <p>{invite.requests || 0} solicitudes pendientes</p>
+          </div>
+        </aside>
+      </section>
+
+      {attendeesOpen && (
+        <div className="plan-modal-backdrop" role="presentation">
+          <section
+            className="plan-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Asistentes"
+          >
+            <div className="plan-modal-head">
+              <strong>Asistentes</strong>
+              <button
+                className="round-icon-button"
+                type="button"
+                onClick={() => setAttendeesOpen(false)}
+              >
+                ?
+              </button>
+            </div>
+            <input
+              className="plan-search-input"
+              placeholder="Buscar..."
+              value={attendeeSearch}
+              onChange={(event) => setAttendeeSearch(event.target.value)}
+            />
+            <div className="plan-modal-list">
+              {visibleAttendees.map((user) => (
+                <div className="plan-modal-user" key={user.id || user.nombre}>
+                  <UserAvatar user={user} />
+                  <span>{user.nombre}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+    </main>
+  );
+}
+
 function validateRegisterForm(form) {
   const errors = {};
+  const telefonoLimpio = form.telefono.replace(/\D/g, "");
   if (form.nombre.trim().length < 2) errors.nombre = "Escribe tu nombre.";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
     errors.email = "Usa un email válido.";
   }
-  if (form.telefono.replace(/\D/g, "").length < 10) {
+  if (telefonoLimpio.length !== 10) {
     errors.telefono = "Incluye un teléfono de 10 dígitos.";
   }
   if (form.password.length < 6) {
@@ -763,6 +1301,58 @@ function App() {
     context.id && isMobileBrowser() ? "opening" : "fallback",
   );
 
+  const userDataComplete = {
+    id: "",
+    idStripe: "",
+    email: "",
+    nombre: "",
+    apellidos: "",
+    fechaNacimiento: "",
+    edad: 0,
+    telefono: 0,
+    actividad: "",
+    situacionSentimental: "",
+    bebidaFavorita: "",
+    comidaFavorita: "",
+    universidad: "",
+    direccion: "",
+    lugarFavorito: "",
+    genero: "",
+    gustos: {},
+    cartera: [],
+    amigos: [],
+    intereses: [],
+    salir: [],
+    hacerAmigos: [],
+    tenerCitas: [],
+    econtrarQueHacer: false,
+    viewInteractionInfo: true,
+    viewQrInfo: true,
+    images: [],
+    imagen: "",
+    zona: "PUEBLA",
+    estatus: true,
+    estado: "",
+    distancia: "",
+    profesion: "",
+    perfilPublico: "",
+    ubicacion: "",
+    descripcion: "",
+    tooltips: {
+      qr: false,
+      pulers: false,
+      ayuda: false,
+      crearPlan: false,
+      credito: false,
+      division: false,
+      invitados: false,
+      unirseAPlan: false,
+    },
+    nombreBusqueda: [],
+    method: "",
+    createdAt: null,
+  };
+
   useEffect(() => {
     console.info(`${DEBUG_PREFIX} Estado de invitacion`, {
       context,
@@ -798,6 +1388,23 @@ function App() {
     return () => {
       ignore = true;
     };
+  }, [context]);
+
+  useEffect(() => {
+    if (!context.id || context.kind !== "plan") return;
+
+    const intervalId = window.setInterval(() => {
+      fetchInvite(context)
+        .then((data) => {
+          setInvite(data);
+          setInviteStatus("ready");
+        })
+        .catch((error) => {
+          console.warn(`${DEBUG_PREFIX} No se pudo refrescar el plan`, error);
+        });
+    }, 12000);
+
+    return () => window.clearInterval(intervalId);
   }, [context]);
 
   useEffect(() => {
@@ -849,7 +1456,13 @@ function App() {
     ...new Set(
       [
         ...(Array.isArray(invite.tags) ? invite.tags : []),
-        isEvent ? "Evento" : isEventDetail ? "Detalle de evento" : isReserva ? "Reservacion" : "Plan",
+        isEvent
+          ? "Evento"
+          : isEventDetail
+            ? "Detalle de evento"
+            : isReserva
+              ? "Reservacion"
+              : "Plan",
         isPlan ? formatPlanVisibility(invite.visibility) : invite.host,
       ]
         .filter(Boolean)
@@ -903,7 +1516,7 @@ function App() {
 
           <div className="coming-footer">
             <div className="pulse-circle" />
-            <span>Pul © 2026</span>
+            <span>Pul ? 2026</span>
           </div>
         </div>
       </main>
@@ -928,42 +1541,147 @@ function App() {
     setErrors((current) => ({ ...current, [name]: undefined }));
   };
 
-  const completeAuth = (user) => {
+  const validatePhone = async (telefono) => {
+    const response = await fetch(`${BACKEND_URL}/users/validate-phone`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        telefono,
+      }),
+    });
+
+    return await response.json();
+  };
+
+  const createStripeCustomer = async ({ name, email, phone }) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/stripe/create-customer`, {
+        method: "POST",
+        headers: {
+          Accept: "*/*",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          description: `Cliente pul: ${name}`,
+          email,
+          name,
+          phone,
+        }),
+      });
+
+      const { info } = await response.json();
+
+      return info.id;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  };
+
+  const registerUser = async (uid, data) => {
+    const response = await fetch(`${BACKEND_URL}/users/register-user`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        uid,
+        data,
+      }),
+    });
+
+    return await response.json();
+  };
+
+  const completeAuth = async (user) => {
     sessionStorage.setItem("pulExpressUser", JSON.stringify(user));
+
     setAuthUser(user);
+
     setFlowStatus("authenticated");
+
     setView(isReserva ? "payment" : isEvent ? "event-checkout" : "landing");
+
     setPlanJoinMessage("");
   };
 
   const onRegisterSubmit = async (event) => {
     event.preventDefault();
+
     const nextErrors = validateRegisterForm(registerForm);
+
+    console.log(nextErrors);
+
     setErrors(nextErrors);
+
     if (Object.keys(nextErrors).length > 0) return;
 
-    setFlowStatus("registering");
     try {
+      const phoneValidation = await validatePhone(registerForm.telefono.trim());
+
+      if (phoneValidation.exists) {
+        setErrors({
+          form: "Este teléfono ya está registrado.",
+        });
+
+        return;
+      }
+
+      setFlowStatus("registering");
+
       const firebaseUser = await signUpWithFirebasePassword(
-        registerForm.email.trim(),
+        registerForm.email.trim().toLowerCase(),
+        registerForm.password,
+      );
+
+      // CREAR CUSTOMER STRIPE
+      const idStripe = await createStripeCustomer({
+        name: registerForm.nombre.trim(),
+        email: firebaseUser.email || registerForm.email.trim(),
+        phone: registerForm.telefono.trim(),
+      });
+
+      // OBJETO USUARIO
+      const userData = {
+        ...userDataComplete,
+        id: firebaseUser.localId,
+        idStripe,
+        nombre: registerForm.nombre.trim(),
+        email: firebaseUser.email || registerForm.email.trim().toLowerCase(),
+        telefono: registerForm.telefono.trim(),
+        method: "express-register",
+        createdAt: new Date().toISOString(),
+        nombreBusqueda: [registerForm.nombre.trim()],
+      };
+
+      console.log(userData);
+
+      await registerUser(userData.id, userData);
+
+      // FIRESTORE + LOGIN
+      const firebaseUserLogin = await signInWithFirebasePassword(
+        registerForm.email.trim().toLowerCase(),
         registerForm.password,
       );
       completeAuth({
-        id: firebaseUser.localId,
-        uid: firebaseUser.localId,
-        idToken: firebaseUser.idToken,
-        nombre: registerForm.nombre.trim(),
-        email: firebaseUser.email || registerForm.email.trim(),
-        telefono: registerForm.telefono.trim(),
-        method: "express-register",
+        id: firebaseUserLogin.localId,
+        uid: firebaseUserLogin.localId,
+        idToken: firebaseUserLogin.idToken,
+        nombre: firebaseUserLogin.displayName || loginForm.email.split("@")[0],
+        email: firebaseUserLogin.email || loginForm.email.trim(),
+        method: "web-login",
         createdAt: new Date().toISOString(),
       });
     } catch (error) {
       setFlowStatus("register-error");
+
       const message =
         error.message === "EMAIL_EXISTS"
           ? "Este email ya está registrado. Inicia sesión para continuar."
           : error.message || "No se pudo crear la cuenta.";
+
       setErrors({ form: message });
     }
   };
@@ -1027,20 +1745,68 @@ function App() {
         result?.status === "requested" ? "plan-requested" : "plan-joined",
       );
       if (result?.status === "joined") {
+        const nextUser = normalizeUserSummary(authUser);
         setInvite((current) => ({
           ...current,
           members: Number(current.members || 0) + 1,
+          integrantesIds: [
+            ...new Set([
+              ...(current.integrantesIds || []),
+              getUserId(authUser),
+            ]),
+          ],
+          attendees: [...(current.attendees || []), nextUser],
         }));
       }
       if (result?.status === "requested") {
         setInvite((current) => ({
           ...current,
           requests: Number(current.requests || 0) + 1,
+          solicitudesIds: [
+            ...new Set([
+              ...(current.solicitudesIds || []),
+              getUserId(authUser),
+            ]),
+          ],
         }));
       }
     } catch (error) {
       setPlanJoinMessage(
         error.message || "No se pudo completar la unión al plan.",
+      );
+      setFlowStatus("plan-join-error");
+    }
+  };
+
+  const leaveCurrentPlan = async () => {
+    if (!authUser || !invite.id || !isPlan) {
+      setView("login");
+      return;
+    }
+
+    setFlowStatus("leaving-plan");
+    setPlanJoinMessage("");
+    try {
+      const result = await postJson(PLAN_LEAVE_ENDPOINT, {
+        planId: invite.id,
+        user: authUser,
+      });
+      setPlanJoinMessage(result?.message || "Te saliste del plan.");
+      setFlowStatus("plan-left");
+      const userId = getUserId(authUser);
+      setInvite((current) => ({
+        ...current,
+        members: Math.max(Number(current.members || 1) - 1, 0),
+        integrantesIds: (current.integrantesIds || []).filter(
+          (id) => id !== userId,
+        ),
+        attendees: (current.attendees || []).filter(
+          (user) => getUserId(user) !== userId,
+        ),
+      }));
+    } catch (error) {
+      setPlanJoinMessage(
+        error.message || "No se pudo salir del plan. Intenta de nuevo.",
       );
       setFlowStatus("plan-join-error");
     }
@@ -1189,12 +1955,38 @@ function App() {
     }
   };
 
-  const planSlots = isPlan
-    ? Array.from(
-        { length: Math.max(invite.capacity || 10, 10) },
-        (_, index) => index,
-      )
-    : [];
+  const planSlots = [];
+
+  if (isPlan) {
+    return (
+      <PlanWebView
+        invite={invite}
+        inviteStatus={inviteStatus}
+        authUser={authUser}
+        onLogout={() => {
+          sessionStorage.removeItem("pulExpressUser");
+          setAuthUser(null);
+          setView("landing");
+          setPlanJoinMessage("");
+          setFlowStatus("idle");
+        }}
+        flowStatus={flowStatus}
+        planJoinMessage={planJoinMessage}
+        view={view}
+        setView={setView}
+        errors={errors}
+        registerForm={registerForm}
+        loginForm={loginForm}
+        onRegisterFieldChange={onRegisterFieldChange}
+        onLoginFieldChange={onLoginFieldChange}
+        onRegisterSubmit={onRegisterSubmit}
+        onLoginSubmit={onLoginSubmit}
+        joinCurrentPlan={joinCurrentPlan}
+        leaveCurrentPlan={leaveCurrentPlan}
+        attemptOpenApp={attemptOpenApp}
+      />
+    );
+  }
 
   return (
     <main
@@ -1240,7 +2032,7 @@ function App() {
                   }
                 >
                   <div className="plan-emoji-badge" aria-hidden="true">
-                    {invite.emoji || "⚽"}
+                    {invite.emoji || "?"}
                   </div>
                   <div className="plan-kicker">
                     {displayTags.slice(0, 2).map((tag) => (
@@ -1255,7 +2047,7 @@ function App() {
                     <span>14 km</span>
                   </div>
                   <h1>{invite.title}</h1>
-                  <span className="time-pill">☼ Mediodía</span>
+                  <span className="time-pill">? Mediodía</span>
                 </div>
 
                 <div className="plan-info-strip">
@@ -1334,7 +2126,7 @@ function App() {
                   <div>
                     <strong>{invite.host}</strong>
                     <span>
-                      Host · {formatPlanVisibility(invite.visibility)}
+                      Host ? {formatPlanVisibility(invite.visibility)}
                     </span>
                   </div>
                 </section>
@@ -1348,7 +2140,7 @@ function App() {
                   <h2>Dónde</h2>
                   <div className="location-card">
                     <div className="fake-map" aria-hidden="true">
-                      <span className="map-pin">?</span>
+                      <span className="map-pin">●</span>
                       <span className="google-label">Google</span>
                     </div>
                     <div>
@@ -1360,7 +2152,7 @@ function App() {
                         type="button"
                         onClick={() => attemptOpenApp(invite, "location")}
                       >
-                        ? 14 km · Abrir ubicación
+                        ᐅ 14 km · Abrir ubicación
                       </button>
                     </div>
                   </div>
@@ -1385,7 +2177,13 @@ function App() {
                   }
                 >
                   <p className="eyebrow">
-                    {isEvent ? "Evento compartido" : isEventDetail ? "Detalle de evento" : isReserva ? "Detalle de reserva" : "Registro Express"}
+                    {isEvent
+                      ? "Evento compartido"
+                      : isEventDetail
+                        ? "Detalle de evento"
+                        : isReserva
+                          ? "Detalle de reserva"
+                          : "Registro Express"}
                   </p>
                   <h1>{invite.title}</h1>
                 </div>
@@ -1410,19 +2208,26 @@ function App() {
                     <span>
                       {isEvent
                         ? "Asistentes"
-                        : isEventDetail ? "Asistentes" : isReserva ? "Tu parte" : "Lugares"}
+                        : isEventDetail
+                          ? "Asistentes"
+                          : isReserva
+                            ? "Tu parte"
+                            : "Lugares"}
                     </span>
                     <strong>
                       {isEvent
                         ? `${invite.members || 0}${invite.capacity ? ` / ${invite.capacity}` : ""}`
-                        : isEventDetail ? `${invite.members || 0}${invite.capacity ? ` / ${invite.capacity}` : ""}` : isReserva ? invite.amount > 0
-                            ? formatCurrency(invite.amount)
-                            : "Monto por confirmar"
-                          : spotsLeft === null
-                            ? "Por confirmar"
-                            : spotsLeft > 0
-                              ? `${spotsLeft} disponibles`
-                              : "Lista llena"}
+                        : isEventDetail
+                          ? `${invite.members || 0}${invite.capacity ? ` / ${invite.capacity}` : ""}`
+                          : isReserva
+                            ? invite.amount > 0
+                              ? formatCurrency(invite.amount)
+                              : "Monto por confirmar"
+                            : spotsLeft === null
+                              ? "Por confirmar"
+                              : spotsLeft > 0
+                                ? `${spotsLeft} disponibles`
+                                : "Lista llena"}
                     </strong>
                   </div>
                 </div>
@@ -1537,7 +2342,7 @@ function App() {
                     >
                       {flowStatus === "joining-plan"
                         ? "Entrando al grupo..."
-                        : `Entrar al grupo · vamos ${Math.max(invite.members || 1, 1)}`}
+                        : `Entrar al grupo ? vamos ${Math.max(invite.members || 1, 1)}`}
                     </button>
                     <button
                       className="secondary-button"
@@ -1597,7 +2402,13 @@ function App() {
             )}
             <div className="floating-ticket">
               <span>
-                {isEvent ? "Evento ID" : isEventDetail ? "Detalle evento ID" : isReserva ? "Reserva ID" : "Plan ID"}
+                {isEvent
+                  ? "Evento ID"
+                  : isEventDetail
+                    ? "Detalle evento ID"
+                    : isReserva
+                      ? "Reserva ID"
+                      : "Plan ID"}
               </span>
               <strong>{invite.id || "sin-id"}</strong>
             </div>
@@ -2048,7 +2859,7 @@ function App() {
             >
               {flowStatus === "joining-plan"
                 ? "Entrando al grupo..."
-                : `Entrar al grupo · vamos ${Math.max(invite.members || 1, 1)}`}
+                : `Entrar al grupo ? vamos ${Math.max(invite.members || 1, 1)}`}
             </button>
             {planJoinMessage && (
               <p
