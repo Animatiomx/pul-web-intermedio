@@ -1,5 +1,5 @@
 import defaultAvatar from "../../../assets/default.png";
-import logo from "../../../assets/logo.png";
+import logo from "../../../assets/logopul.png";
 import {
   APP_STORE_URL,
   PLAY_STORE_URL,
@@ -65,7 +65,7 @@ export default function PublicInviteView({
             <button
               className="round-icon-button"
               type="button"
-              onClick={() => window.history.back()}
+              onClick={() => window.location.assign("/")}
             >
               ?
             </button>

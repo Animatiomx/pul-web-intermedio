@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   onAuthStateChanged,
   signOut,
@@ -79,6 +79,49 @@ const initialGuestForm = {
   telefono: "",
 };
 
+function goHome() {
+  window.location.assign("/");
+}
+
+function shouldGoHomeForLoadError(error) {
+  return [400, 404].includes(Number(error?.status));
+}
+
+function getInviteKindLabel(kind) {
+  if (kind === "reserva") return "reservación";
+  if (kind === "event" || kind === "eventDetail") return "evento";
+  return "plan";
+}
+
+function PulLoader() {
+  return (
+    <main className="pul-loader-shell" aria-live="polite">
+      <div className="pul-loader-card">
+        <img src={logo} alt="Pul" className="pul-loader-logo" />
+        <div className="pul-loader-spinner" aria-hidden="true" />
+        <p>Cargando plan...</p>
+      </div>
+    </main>
+  );
+}
+
+function NotFoundNotice({ kind }) {
+  const label = getInviteKindLabel(kind);
+
+  return (
+    <main className="pul-loader-shell" aria-live="polite">
+      <div className="pul-loader-card">
+        <img src={logo} alt="Pul" className="pul-loader-logo" />
+        <div className="pul-not-found-icon" aria-hidden="true">
+          !
+        </div>
+        <strong>No se encontró el {label}</strong>
+        <p>Te estamos llevando al inicio.</p>
+      </div>
+    </main>
+  );
+}
+
 /**
  * Pantalla publica principal que orquesta invitaciones, auth, pagos y deep links.
  */
@@ -89,6 +132,9 @@ function PublicInviteScreen() {
   const [invite, setInvite] = useState(() => fallbackInvite(context));
   const [inviteStatus, setInviteStatus] = useState(
     context.id ? "loading" : "missing",
+  );
+  const [notFoundKind, setNotFoundKind] = useState(() =>
+    !context.id && !isComingSoonView ? context.kind : "",
   );
   const [view, setView] = useState("landing");
   const [registerForm, setRegisterForm] = useState(initialForm);
@@ -120,6 +166,18 @@ function PublicInviteScreen() {
     integrantes: [],
     solicitudes: [],
   });
+
+  const showNotFound = useCallback((kind = context.kind) => {
+    setNotFoundKind(kind);
+    setInviteStatus("missing");
+  }, [context.kind]);
+
+  useEffect(() => {
+    if (!notFoundKind) return undefined;
+
+    const timeoutId = window.setTimeout(goHome, 2200);
+    return () => window.clearTimeout(timeoutId);
+  }, [notFoundKind]);
 
   useEffect(() => {
     let mounted = true;
@@ -240,6 +298,10 @@ function PublicInviteScreen() {
       })
       .catch((error) => {
         if (ignore) return;
+        if (shouldGoHomeForLoadError(error)) {
+          showNotFound(context.kind);
+          return;
+        }
         console.error(`${DEBUG_PREFIX} Usando fallback por error al cargar`, {
           context,
           error,
@@ -251,7 +313,7 @@ function PublicInviteScreen() {
     return () => {
       ignore = true;
     };
-  }, [context]);
+  }, [context, isComingSoonView, showNotFound]);
 
   useEffect(() => {
     if (!context.id || context.kind !== "plan") return;
@@ -295,8 +357,7 @@ function PublicInviteScreen() {
         planRef,
         (snap) => {
           if (!snap.exists()) {
-            setInvite(fallbackInvite(context));
-            setInviteStatus("missing");
+            showNotFound("plan");
             return;
           }
 
@@ -390,7 +451,7 @@ function PublicInviteScreen() {
       listenersActive = false;
       unsubscribes.forEach((unsubscribe) => unsubscribe());
     };
-  }, [authUser, context]);
+  }, [authUser, context, showNotFound]);
 
   const planUserIdsKey = [
     invite.hostId,
@@ -566,6 +627,14 @@ function PublicInviteScreen() {
         </div>
       </main>
     );
+  }
+
+  if (inviteStatus === "loading") {
+    return <PulLoader />;
+  }
+
+  if (notFoundKind) {
+    return <NotFoundNotice kind={notFoundKind} />;
   }
 
   /** Sincroniza cambios del formulario de registro y limpia errores del campo. */

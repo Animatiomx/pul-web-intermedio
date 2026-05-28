@@ -1,6 +1,6 @@
 import { useState } from "react";
 import defaultAvatar from "../../../assets/default.png";
-import logo from "../../../assets/logo.png";
+import logo from "../../../assets/logopul.png";
 import { getUserId, normalizeUserSummary } from "../../../shared/utils/users";
 import {
   formatPlanDate,
@@ -413,7 +413,7 @@ export default function PlanWebView({
         <button
           className="round-icon-button"
           type="button"
-          onClick={() => window.history.back()}
+          onClick={() => window.location.assign("/")}
         >
           ←
         </button>

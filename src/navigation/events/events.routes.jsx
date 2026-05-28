@@ -1,5 +1,3 @@
-import { EventsModule } from "../../modules/events/events.module";
-
 /**
  * Rutas publicas asociadas al dominio de eventos.
  */
@@ -7,11 +5,17 @@ export const eventRoutes = [
   {
     kind: "event",
     path: "/evento/:eventId",
-    component: EventsModule,
+    loadComponent: () =>
+      import("../../modules/events/events.module").then((module) => ({
+        default: module.EventsModule,
+      })),
   },
   {
     kind: "eventDetail",
     path: "/detalle-evento/:eventDetailId",
-    component: EventsModule,
+    loadComponent: () =>
+      import("../../modules/events/events.module").then((module) => ({
+        default: module.EventsModule,
+      })),
   },
 ];

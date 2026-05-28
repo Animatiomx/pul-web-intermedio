@@ -538,7 +538,9 @@ async function fetchPublicInviteDocument(path, id, queryParams = {}) {
       status: response.status,
       body: errorBody,
     });
-    throw new Error(`${path} request failed with ${response.status}`);
+    const error = new Error(`${path} request failed with ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
 
   const payload = await response.json();

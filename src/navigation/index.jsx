@@ -1,8 +1,14 @@
+import { lazy, Suspense } from "react";
 import { eventRoutes } from "./events/events.routes";
 import { planRoutes } from "./plans/plans.routes";
 import { reservationRoutes } from "./reservations/reservations.routes";
 
-const routes = [...reservationRoutes, ...eventRoutes, ...planRoutes];
+const routes = [...reservationRoutes, ...eventRoutes, ...planRoutes].map(
+  (route) => ({
+    ...route,
+    component: lazy(route.loadComponent),
+  }),
+);
 
 /**
  * Traduce la URL publica actual a un dominio interno sin acoplar App a pantallas.
@@ -64,8 +70,21 @@ export function AppRouter() {
   const routeKind = getRouteContext();
   const route =
     routes.find((candidate) => candidate.kind === routeKind) ||
-    planRoutes[0];
+    routes.find((candidate) => candidate.kind === "plan");
   const Screen = route.component;
 
-  return <Screen />;
+  return (
+    <Suspense
+      fallback={
+        <main className="pul-loader-shell" aria-live="polite">
+          <div className="pul-loader-card">
+            <div className="pul-loader-spinner" aria-hidden="true" />
+            <p>Cargando...</p>
+          </div>
+        </main>
+      }
+    >
+      <Screen />
+    </Suspense>
+  );
 }
