@@ -238,7 +238,7 @@ export function normalizePlan(document, id) {
 /**
  * Adapta una reserva o division de cuenta al contrato comun de invitacion.
  */
-function normalizeReserva(document, id, resourceType = "reservacion") {
+export function normalizeReserva(document, id, resourceType = "reservacion") {
   const data = normalizeFirestoreDocument(document);
   const isEvent = resourceType === "evento";
   const event = data.evento || {};
@@ -292,13 +292,14 @@ function normalizeReserva(document, id, resourceType = "reservacion") {
     refused: refused.length,
     resourceType,
     itemLabel,
+    raw: data,
   };
 }
 
 /**
  * Adapta eventos y detalles de evento al contrato comun de invitacion.
  */
-function normalizeEvent(document, id, kind = "event") {
+export function normalizeEvent(document, id, kind = "event") {
   const data = normalizeFirestoreDocument(document);
   const tickets = Array.isArray(data.boletosTipo)
     ? data.boletosTipo.map((ticket) => ({
@@ -361,6 +362,7 @@ function normalizeEvent(document, id, kind = "event") {
     rules: data.reglas || "",
     details: data.especificaciones || "",
     periodicity: Array.isArray(data.periodicidad) ? data.periodicidad : [],
+    raw: data,
   };
 }
 

@@ -57,9 +57,19 @@ import {
   fallbackInvite,
   fetchInvite,
   getInviteContext,
+  normalizeEvent,
   normalizePlan,
+  normalizeReserva,
 } from "../services/invite.service";
 import PublicInviteView from "./PublicInviteView";
+import { fetchEventParticipantsPage } from "../../events/services/eventParticipants.service";
+import {
+  beginReservationPayment,
+  getPendingPaymentRequest,
+  joinReservationTransaction,
+  shouldHideReservationForUser,
+} from "../../reservations/services/reservationParticipation.service";
+import { sendOneSignalNotification } from "../../../shared/services/notifications.service";
 
 const initialForm = {
   nombre: "",
@@ -91,6 +101,51 @@ function getInviteKindLabel(kind) {
   if (kind === "reserva") return "reservación";
   if (kind === "event" || kind === "eventDetail") return "evento";
   return "plan";
+}
+
+function getCheckoutUrl(result) {
+  return (
+    result?.url ||
+    result?.checkoutUrl ||
+    result?.session?.url ||
+    result?.info?.url ||
+    ""
+  );
+}
+
+function getInviteSignature(invite) {
+  return JSON.stringify({
+    id: invite?.id || "",
+    kind: invite?.kind || "",
+    title: invite?.title || "",
+    status: invite?.raw?.status || invite?.status || "",
+    updatedAt:
+      invite?.raw?.updatedAt?.seconds ||
+      invite?.raw?.draftUpdatedAt?.seconds ||
+      invite?.raw?.dateTime?.seconds ||
+      "",
+    members:
+      invite?.raw?.integrantesIds?.length ||
+      invite?.raw?.integrantes?.length ||
+      invite?.members ||
+      0,
+    total:
+      invite?.raw?.cuentaCurso?.total ||
+      invite?.raw?.cuenta?.total ||
+      invite?.total ||
+      0,
+    paymentRequests: (invite?.raw?.paymentRequests || [])
+      .map((request) => `${request.id}:${request.status}:${request.monto}`)
+      .join("|"),
+  });
+}
+
+function setInviteIfChanged(setInvite, nextInvite) {
+  setInvite((current) =>
+    getInviteSignature(current) === getInviteSignature(nextInvite)
+      ? current
+      : nextInvite,
+  );
 }
 
 function PulLoader() {
@@ -148,6 +203,13 @@ function PublicInviteScreen() {
   const [planWaitlist, setPlanWaitlist] = useState([]);
   const [planActivities, setPlanActivities] = useState([]);
   const [planUsersById, setPlanUsersById] = useState(new Map());
+  const [eventAttendees, setEventAttendees] = useState([]);
+  const [eventAttendeesCursor, setEventAttendeesCursor] = useState("");
+  const [eventAttendeesHasMore, setEventAttendeesHasMore] = useState(false);
+  const [eventAttendeesLoading, setEventAttendeesLoading] = useState(false);
+  const [reservationActionLoading, setReservationActionLoading] = useState("");
+  const [reservationIndividualAccount, setReservationIndividualAccount] =
+    useState(null);
   const [authUser, setAuthUser] = useState(() => {
     const cached =
       localStorage.getItem("pulExpressUser") ||
@@ -275,14 +337,6 @@ function PublicInviteScreen() {
   };
 
   useEffect(() => {
-    console.info(`${DEBUG_PREFIX} Estado de invitacion`, {
-      context,
-      inviteStatus,
-      invite,
-    });
-  }, [context, invite, inviteStatus]);
-
-  useEffect(() => {
     if (!context.id) {
       console.warn(`${DEBUG_PREFIX} No hay ID en la URL`, context);
       return;
@@ -292,8 +346,14 @@ function PublicInviteScreen() {
     fetchInvite(context)
       .then((data) => {
         if (ignore) return;
-        console.info(`${DEBUG_PREFIX} Invitacion lista para render`, data);
-        setInvite(data);
+        if (
+          data.kind === "reserva" &&
+          shouldHideReservationForUser(data.raw, authUser?.id || authUser?.uid)
+        ) {
+          goHome();
+          return;
+        }
+        setInviteIfChanged(setInvite, data);
         setInviteStatus("ready");
       })
       .catch((error) => {
@@ -306,14 +366,14 @@ function PublicInviteScreen() {
           context,
           error,
         });
-        setInvite(fallbackInvite(context));
+        setInviteIfChanged(setInvite, fallbackInvite(context));
         setInviteStatus("fallback");
       });
 
     return () => {
       ignore = true;
     };
-  }, [context, isComingSoonView, showNotFound]);
+  }, [authUser, context, isComingSoonView, showNotFound]);
 
   useEffect(() => {
     if (!context.id || context.kind !== "plan") return;
@@ -453,6 +513,148 @@ function PublicInviteScreen() {
     };
   }, [authUser, context, showNotFound]);
 
+  useEffect(() => {
+    if (!context.id || context.kind !== "reserva" || !authUser) return;
+
+    const reservationRef = doc(db, "reservaciones", context.id);
+    const unsubscribe = onSnapshot(
+      reservationRef,
+      (snap) => {
+        if (!snap.exists()) {
+          showNotFound("reserva");
+          return;
+        }
+
+        const data = { id: snap.id, ...snap.data() };
+        if (shouldHideReservationForUser(data, authUser.id || authUser.uid)) {
+          goHome();
+          return;
+        }
+
+        setInviteIfChanged(
+          setInvite,
+          normalizeReserva({ fields: null, ...data }, snap.id),
+        );
+        setInviteStatus("ready");
+      },
+      (error) => {
+        console.error(`${DEBUG_PREFIX} Error en listener de reserva`, error);
+        setInviteStatus("fallback");
+      },
+    );
+
+    return () => unsubscribe();
+  }, [authUser, context.id, context.kind, showNotFound]);
+
+  useEffect(() => {
+    if (!context.id || context.kind !== "reserva" || !authUser) {
+      return undefined;
+    }
+
+    const userId = authUser.id || authUser.uid;
+    if (!userId) {
+      return undefined;
+    }
+
+    const individualAccountRef = doc(
+      db,
+      "subcuentasReservaciones",
+      `${context.id}${userId}`,
+    );
+    const unsubscribe = onSnapshot(
+      individualAccountRef,
+      (snap) => {
+        if (!snap.exists()) {
+          setReservationIndividualAccount(null);
+          return;
+        }
+
+        const account = { id: snap.id, ...snap.data() };
+        const total = Number(account.cuenta?.total || account.total || 0);
+        setReservationIndividualAccount(total > 0 ? account : null);
+      },
+      (error) => {
+        console.error(
+          `${DEBUG_PREFIX} Error en listener de subcuenta de reserva`,
+          error,
+        );
+        setReservationIndividualAccount(null);
+      },
+    );
+
+    return () => unsubscribe();
+  }, [authUser, context.id, context.kind]);
+
+  useEffect(() => {
+    const isEventContext =
+      context.kind === "event" || context.kind === "eventDetail";
+    if (!context.id || !isEventContext || !authUser) return;
+
+    const collectionName =
+      context.kind === "eventDetail" ? "eventosUsers" : "eventos";
+    const eventRef = doc(db, collectionName, context.id);
+    const unsubscribe = onSnapshot(
+      eventRef,
+      (snap) => {
+        if (!snap.exists()) {
+          showNotFound("event");
+          return;
+        }
+
+        setInviteIfChanged(
+          setInvite,
+          normalizeEvent(
+            { fields: null, ...snap.data() },
+            snap.id,
+            context.kind,
+          ),
+        );
+        setInviteStatus("ready");
+      },
+      (error) => {
+        console.error(`${DEBUG_PREFIX} Error en listener de evento`, error);
+        setInviteStatus("fallback");
+      },
+    );
+
+    return () => unsubscribe();
+  }, [authUser, context.id, context.kind, showNotFound]);
+
+  useEffect(() => {
+    const isEventContext =
+      context.kind === "event" || context.kind === "eventDetail";
+    if (!context.id || !isEventContext) {
+      return;
+    }
+
+    let ignore = false;
+    fetchEventParticipantsPage(context.id, "", 20)
+      .then((page) => {
+        if (ignore) return;
+        setEventAttendees(page.users);
+        setEventAttendeesCursor(page.nextCursor);
+        setEventAttendeesHasMore(page.hasMore);
+      })
+      .catch((error) => {
+        console.warn(`${DEBUG_PREFIX} No se pudieron cargar asistentes`, error);
+        if (!ignore) {
+          const rawAttendees = invite.raw?.integrantes || [];
+          setEventAttendees(
+            rawAttendees.slice(0, 20).map((item) => normalizeUserSummary(item)),
+          );
+          setEventAttendeesCursor("");
+          setEventAttendeesHasMore(rawAttendees.length > 20);
+        }
+      })
+      .finally(() => {
+        if (!ignore) setEventAttendeesLoading(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [context.id, context.kind, invite.raw]);
+
   const planUserIdsKey = [
     invite.hostId,
     ...(invite.integrantesIds || []),
@@ -497,12 +699,15 @@ function PublicInviteScreen() {
   }, [authUser, context.kind, planUserIdsKey]);
 
   useEffect(() => {
-    if (!context.id || context.kind === "plan") return;
+    const shouldPollPublicInvite =
+      context.kind === "event" || context.kind === "eventDetail";
+
+    if (!context.id || !shouldPollPublicInvite || authUser) return;
 
     const intervalId = window.setInterval(() => {
       fetchInvite(context)
         .then((data) => {
-          setInvite(data);
+          setInviteIfChanged(setInvite, data);
           setInviteStatus("ready");
         })
         .catch((error) => {
@@ -511,7 +716,7 @@ function PublicInviteScreen() {
     }, 12000);
 
     return () => window.clearInterval(intervalId);
-  }, [context]);
+  }, [authUser, context]);
 
   useEffect(() => {
     if (!context.id || !isMobileBrowser() || inviteStatus === "loading") return;
@@ -1057,18 +1262,18 @@ function PublicInviteScreen() {
         cancelUrl: window.location.href,
       });
 
-      if (result?.url) {
-        window.location.href = result.url;
+      const checkoutUrl = getCheckoutUrl(result);
+      if (checkoutUrl) {
+        window.location.href = checkoutUrl;
         return;
       }
 
-      await new Promise((resolve) => window.setTimeout(resolve, 900));
-      sessionStorage.setItem(
-        `pulReservaPayment:${invite.id}`,
-        JSON.stringify({ paidAt: new Date().toISOString(), user: authUser }),
+      setPlanJoinMessage(
+        "Stripe respondió sin URL de checkout. Revisa la respuesta del backend.",
       );
-      setFlowStatus("paid");
-    } catch {
+      setFlowStatus("payment-error");
+    } catch (error) {
+      setPlanJoinMessage(error.message || "No se pudo iniciar el pago.");
       setFlowStatus("payment-error");
     }
   };
@@ -1104,6 +1309,123 @@ function PublicInviteScreen() {
     return fetchPlanMembersPage(invite.id, cursorId, 100);
   };
 
+  const loadMoreEventAttendees = async () => {
+    if (
+      eventAttendeesLoading ||
+      !eventAttendeesHasMore ||
+      !(context.kind === "event" || context.kind === "eventDetail")
+    ) {
+      return;
+    }
+
+    setEventAttendeesLoading(true);
+    try {
+      const page = await fetchEventParticipantsPage(
+        context.id,
+        eventAttendeesCursor,
+        50,
+      );
+      setEventAttendees((current) => {
+        const next = new Map(current.map((user) => [user.id, user]));
+        page.users.forEach((user) => next.set(user.id, user));
+        return Array.from(next.values());
+      });
+      setEventAttendeesCursor(page.nextCursor);
+      setEventAttendeesHasMore(page.hasMore);
+    } finally {
+      setEventAttendeesLoading(false);
+    }
+  };
+
+  const joinCurrentReservation = async () => {
+    if (!authUser || !invite.id || !isReserva) {
+      setView("login");
+      return;
+    }
+
+    setReservationActionLoading("joining");
+    setPlanJoinMessage("");
+    try {
+      const result = await joinReservationTransaction(invite.id, authUser);
+      setPlanJoinMessage("Ya formas parte de esta reservación.");
+      if (
+        result?.reservation?.anfitrion?.id &&
+        result.reservation.anfitrion.id !== authUser.id
+      ) {
+        await sendOneSignalNotification(
+          [result.reservation.anfitrion.id],
+          `Nuevo integrante en ${result.reservation.negocio?.nombre || "tu reservación"}`,
+          `${authUser.nombre || "Un usuario"} se unió a tu reservación.`,
+          { view: "ReservaDetail", id: invite.id, origin: "" },
+        );
+      }
+    } catch (error) {
+      setPlanJoinMessage(
+        error.message || "No pudimos agregarte a la reservación.",
+      );
+      setFlowStatus("plan-join-error");
+    } finally {
+      setReservationActionLoading("");
+    }
+  };
+
+  const payPendingReservationRequest = async () => {
+    if (!authUser || !invite.id || !isReserva) {
+      setView("login");
+      return;
+    }
+
+    const request = getPendingPaymentRequest(invite.raw, authUser.id);
+    if (!request) {
+      setPlanJoinMessage("Este pago ya no está pendiente.");
+      return;
+    }
+
+    setReservationActionLoading("paying");
+    try {
+      const paymentClaim = await beginReservationPayment(invite.id, authUser.id);
+      const result = await postJson(STRIPE_CHECKOUT_ENDPOINT, {
+        reservaId: invite.id,
+        amount: paymentClaim.request.monto,
+        user: authUser,
+        paymentRequestId: authUser.id,
+        paymentLockId: paymentClaim.lockId,
+        successUrl: `${window.location.origin}${window.location.pathname}?reservaId=${invite.id}&payment=success`,
+        cancelUrl: window.location.href,
+      });
+
+      const checkoutUrl = getCheckoutUrl(result);
+      if (checkoutUrl) {
+        window.location.href = checkoutUrl;
+        return;
+      }
+
+      setPlanJoinMessage(
+        "Stripe respondió sin URL de checkout. Revisa la respuesta del backend.",
+      );
+    } catch (error) {
+      setPlanJoinMessage(error.message || "No se pudo iniciar el pago.");
+    } finally {
+      setReservationActionLoading("");
+    }
+  };
+
+  const onLogout = async () => {
+    await signOut(auth).catch(() => {});
+    localStorage.removeItem("pulExpressUser");
+    sessionStorage.removeItem("pulExpressUser");
+    setAuthUser(null);
+    setView("landing");
+    setPlanJoinMessage("");
+    setPlanRequests([]);
+    setPlanWaitlist([]);
+    setPlanActivities([]);
+    setPlanUsersById(new Map());
+    setReservationIndividualAccount(null);
+    setFlowStatus("idle");
+    reloadWithFreshSession();
+  };
+
   const planSlots = [];
 
   if (isPlan) {
@@ -1112,20 +1434,7 @@ function PublicInviteScreen() {
         invite={invite}
         inviteStatus={inviteStatus}
         authUser={authUser}
-        onLogout={async () => {
-          await signOut(auth).catch(() => {});
-          localStorage.removeItem("pulExpressUser");
-          sessionStorage.removeItem("pulExpressUser");
-          setAuthUser(null);
-          setView("landing");
-          setPlanJoinMessage("");
-          setPlanRequests([]);
-          setPlanWaitlist([]);
-          setPlanActivities([]);
-          setPlanUsersById(new Map());
-          setFlowStatus("idle");
-          reloadWithFreshSession();
-        }}
+        onLogout={onLogout}
         flowStatus={flowStatus}
         planJoinMessage={planJoinMessage}
         planRequests={planRequests}
@@ -1157,12 +1466,14 @@ function PublicInviteScreen() {
       isEvent={isEvent}
       isEventDetail={isEventDetail}
       isReserva={isReserva}
+      individualAccount={reservationIndividualAccount}
       usesReservaLayout={usesReservaLayout}
       heroImage={heroImage}
       invite={invite}
       displayTags={displayTags}
       attemptOpenApp={attemptOpenApp}
       authUser={authUser}
+      onLogout={onLogout}
       rejectInvitation={rejectInvitation}
       setView={setView}
       openLoginInApp={openLoginInApp}
@@ -1171,6 +1482,13 @@ function PublicInviteScreen() {
       appPrompt={appPrompt}
       inviteStatus={inviteStatus}
       planJoinMessage={planJoinMessage}
+      eventAttendees={eventAttendees}
+      eventAttendeesHasMore={eventAttendeesHasMore}
+      eventAttendeesLoading={eventAttendeesLoading}
+      loadMoreEventAttendees={loadMoreEventAttendees}
+      joinCurrentReservation={joinCurrentReservation}
+      payPendingReservationRequest={payPendingReservationRequest}
+      reservationActionLoading={reservationActionLoading}
       view={view}
       flowStatus={flowStatus}
       purchasableItems={purchasableItems}

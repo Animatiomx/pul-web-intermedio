@@ -9,6 +9,10 @@ import {
   formatInviteDate,
   formatPlanVisibility,
 } from "../../../shared/utils/formatters";
+import {
+  EventPublicView,
+  ReservationPublicView,
+} from "./PublicInviteRichViews";
 
 /**
  * Vista publica para eventos, reservas y fallback de planes.
@@ -19,6 +23,7 @@ export default function PublicInviteView({
   isEvent,
   isEventDetail,
   isReserva,
+  individualAccount,
   usesReservaLayout,
   heroImage,
   invite,
@@ -33,6 +38,14 @@ export default function PublicInviteView({
   appPrompt,
   inviteStatus,
   planJoinMessage,
+  eventAttendees,
+  eventAttendeesHasMore,
+  eventAttendeesLoading,
+  loadMoreEventAttendees,
+  joinCurrentReservation,
+  payPendingReservationRequest,
+  reservationActionLoading,
+  onLogout,
   view,
   flowStatus,
   purchasableItems,
@@ -55,6 +68,58 @@ export default function PublicInviteView({
   acceptAndPay,
   joinCurrentPlan,
 }) {
+  if (isReserva) {
+    return (
+      <ReservationPublicView
+        invite={invite}
+        authUser={authUser}
+        individualAccount={individualAccount}
+        setView={setView}
+        flowStatus={flowStatus}
+        planJoinMessage={planJoinMessage}
+        joinCurrentReservation={joinCurrentReservation}
+        payPendingReservationRequest={payPendingReservationRequest}
+        reservationActionLoading={reservationActionLoading}
+        rejectInvitation={rejectInvitation}
+        onLogout={onLogout}
+        view={view}
+        errors={errors}
+        registerForm={registerForm}
+        loginForm={loginForm}
+        onRegisterFieldChange={onRegisterFieldChange}
+        onLoginFieldChange={onLoginFieldChange}
+        onRegisterSubmit={onRegisterSubmit}
+        onLoginSubmit={onLoginSubmit}
+      />
+    );
+  }
+
+  if (isEvent || isEventDetail) {
+    return (
+      <EventPublicView
+        invite={invite}
+        authUser={authUser}
+        eventAttendees={eventAttendees}
+        eventAttendeesHasMore={eventAttendeesHasMore}
+        eventAttendeesLoading={eventAttendeesLoading}
+        loadMoreEventAttendees={loadMoreEventAttendees}
+        view={view}
+        setView={setView}
+        purchasableItems={purchasableItems}
+        selectedItem={selectedItem}
+        setSelectedItemId={setSelectedItemId}
+        quantity={quantity}
+        setQuantity={setQuantity}
+        guestForm={guestForm}
+        onGuestFieldChange={onGuestFieldChange}
+        errors={errors}
+        guestTotal={guestTotal}
+        buyAsGuest={buyAsGuest}
+        buyAsUser={buyAsUser}
+      />
+    );
+  }
+
   return (
     <main
       className={`express-shell ${isPlan ? "plan-app-shell" : "media-invite-shell"}`}
