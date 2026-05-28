@@ -45,6 +45,10 @@ export default function PublicInviteView({
   joinCurrentReservation,
   payPendingReservationRequest,
   reservationActionLoading,
+  reservationPaymentSession,
+  reservationPaymentLoading,
+  cancelReservationPayment,
+  confirmReservationPayment,
   onLogout,
   view,
   flowStatus,
@@ -80,7 +84,12 @@ export default function PublicInviteView({
         joinCurrentReservation={joinCurrentReservation}
         payPendingReservationRequest={payPendingReservationRequest}
         reservationActionLoading={reservationActionLoading}
+        reservationPaymentSession={reservationPaymentSession}
+        reservationPaymentLoading={reservationPaymentLoading}
+        cancelReservationPayment={cancelReservationPayment}
+        confirmReservationPayment={confirmReservationPayment}
         rejectInvitation={rejectInvitation}
+        attemptOpenApp={attemptOpenApp}
         onLogout={onLogout}
         view={view}
         errors={errors}

@@ -203,3 +203,120 @@ export async function beginReservationPayment(reservationId, userId) {
     return { lockId, request };
   });
 }
+
+export async function releaseReservationPaymentLock(
+  reservationId,
+  userId,
+  lockId,
+) {
+  if (!reservationId || !userId || !lockId) return;
+
+  const reservationRef = doc(db, "reservaciones", reservationId);
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(reservationRef);
+    if (!snap.exists()) return;
+
+    const reservation = snap.data();
+    const paymentLocks = { ...(reservation.paymentLocks || {}) };
+    if (paymentLocks[userId]?.lockId !== lockId) return;
+
+    delete paymentLocks[userId];
+    transaction.update(reservationRef, {
+      paymentLocks,
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+export async function completeReservationPayment({
+  reservationId,
+  userId,
+  lockId,
+  paymentIntentId = "",
+  payer,
+}) {
+  if (!reservationId || !userId || !lockId) {
+    throw new ReservationConcurrencyError(
+      "missing",
+      "No se pudo identificar el pago.",
+    );
+  }
+
+  const reservationRef = doc(db, "reservaciones", reservationId);
+
+  return runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(reservationRef);
+    if (!snap.exists()) {
+      throw new ReservationConcurrencyError(
+        "missing",
+        "La reservación ya no existe.",
+      );
+    }
+
+    const reservation = snap.data();
+    const paymentLocks = { ...(reservation.paymentLocks || {}) };
+    const activeLock = paymentLocks[userId];
+    if (activeLock?.lockId !== lockId) {
+      throw new ReservationConcurrencyError(
+        "payment-locked",
+        "El pago ya fue actualizado desde otro dispositivo.",
+      );
+    }
+
+    const paymentRequests = (reservation.paymentRequests || []).map(
+      (request) =>
+        request.id === userId
+          ? {
+              ...request,
+              status: "paid",
+              paidAt: new Date(),
+            }
+          : request,
+    );
+    const requestExists = paymentRequests.some(
+      (request) => request.id === userId,
+    );
+    if (!requestExists) {
+      throw new ReservationConcurrencyError(
+        "not-pending",
+        "La solicitud de pago ya no existe.",
+      );
+    }
+
+    const payers = uniqueById([
+      ...(reservation.payers || []).filter((item) => item.id !== userId),
+      payer,
+    ]);
+    const integrantesDivers = (reservation.integrantesDivers || []).map(
+      (integrante) =>
+        integrante.id === userId
+          ? { ...integrante, pagado: "Pagado" }
+          : integrante,
+    );
+    const pendingPaymentUserIds = (
+      reservation.pendingPaymentUserIds || []
+    ).filter((id) => id !== userId);
+    const allPaid =
+      paymentRequests.length > 0 &&
+      paymentRequests.every((request) => request.status === "paid");
+
+    delete paymentLocks[userId];
+
+    transaction.update(reservationRef, {
+      paymentRequests,
+      pendingPaymentUserIds,
+      paymentRequestStatus: allPaid ? "complete" : "requested",
+      payers,
+      integrantesDivers,
+      dividers: (reservation.dividers || []).filter((id) => id !== userId),
+      idPagos: paymentIntentId
+        ? Array.from(new Set([...(reservation.idPagos || []), paymentIntentId]))
+        : reservation.idPagos || [],
+      paymentLocks,
+      updatedAt: serverTimestamp(),
+    });
+
+    return { allPaid };
+  });
+}

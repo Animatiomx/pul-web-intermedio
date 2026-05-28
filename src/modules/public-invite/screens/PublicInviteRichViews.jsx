@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import { loadStripe } from "@stripe/stripe-js";
 import defaultAvatar from "../../../assets/default.png";
 import logo from "../../../assets/logopul.png";
 import {
@@ -104,14 +106,157 @@ function InfoRow({ icon, label, children, action }) {
 
 function StatusNote({ message, flowStatus }) {
   if (!message) return null;
+  const isError = String(flowStatus || "").includes("error");
+
   return (
     <p
-      className={`status-note ${
-        flowStatus === "plan-join-error" ? "error-note" : "success-note"
-      }`}
+      className={`status-note ${isError ? "error-note" : "success-note"}`}
     >
       {message}
     </p>
+  );
+}
+
+function ReservationPaymentForm({
+  amount,
+  loading,
+  authUser,
+  onCancel,
+  onConfirm,
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!stripe || !elements || loading) return;
+
+    setError("");
+    const result = await stripe.confirmPayment({
+      elements,
+      redirect: "if_required",
+      confirmParams: {
+        payment_method_data: {
+          billing_details: {
+            name: authUser?.nombre || authUser?.displayName || "",
+            email: authUser?.email || "",
+          },
+        },
+      },
+    });
+
+    if (result.error) {
+      setError(result.error.message || "El pago no se ha realizado.");
+      return;
+    }
+
+    await onConfirm(result.paymentIntent);
+  };
+
+  return (
+    <form className="reservation-payment-form" onSubmit={handleSubmit}>
+      <PaymentElement
+        options={{
+          defaultValues: {
+            billingDetails: {
+              name: authUser?.nombre || authUser?.displayName || "",
+              email: authUser?.email || "",
+            },
+          },
+          fields: {
+            billingDetails: {
+              email: "never",
+            },
+          },
+          layout: {
+            type: "accordion",
+            defaultCollapsed: false,
+          },
+        }}
+      />
+      {error && <p className="status-note error-note">{error}</p>}
+      <div className="reservation-payment-actions">
+        <button
+          className="ghost-button compact"
+          type="button"
+          onClick={onCancel}
+          disabled={loading}
+        >
+          Cancelar
+        </button>
+        <button
+          className="primary-button compact"
+          type="submit"
+          disabled={!stripe || !elements || loading}
+        >
+          {loading ? "Confirmando..." : `Pagar ${formatCurrency(amount || 0)}`}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ReservationPaymentModal({
+  paymentSession,
+  paymentLoading,
+  authUser,
+  onCancel,
+  onConfirm,
+}) {
+  const stripePromise = useMemo(
+    () =>
+      paymentSession?.publishableKey
+        ? loadStripe(paymentSession.publishableKey)
+        : null,
+    [paymentSession],
+  );
+
+  if (!paymentSession?.clientSecret || !stripePromise) return null;
+
+  return (
+    <div className="reservation-modal-backdrop" role="presentation">
+      <section
+        className="reservation-detail-modal reservation-payment-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pagar reservación"
+      >
+        <div className="reservation-modal-head">
+          <strong>Pagar reservación</strong>
+          <button
+            className="round-icon-button"
+            type="button"
+            onClick={onCancel}
+            disabled={paymentLoading}
+          >
+            ×
+          </button>
+        </div>
+        <div className="reservation-payment-user">
+          <span>Cuenta Stripe</span>
+          <strong>{authUser?.nombre || authUser?.email || "Usuario Pul"}</strong>
+          {authUser?.email && <p>{authUser.email}</p>}
+        </div>
+        <Elements
+          stripe={stripePromise}
+          options={{
+            clientSecret: paymentSession.clientSecret,
+            customerSessionClientSecret:
+              paymentSession.customerSessionClientSecret,
+            loader: "auto",
+          }}
+        >
+          <ReservationPaymentForm
+            amount={paymentSession.amount}
+            loading={paymentLoading}
+            authUser={authUser}
+            onCancel={onCancel}
+            onConfirm={onConfirm}
+          />
+        </Elements>
+      </section>
+    </div>
   );
 }
 
@@ -391,6 +536,11 @@ export function ReservationPublicView({
   joinCurrentReservation,
   payPendingReservationRequest,
   reservationActionLoading,
+  reservationPaymentSession,
+  reservationPaymentLoading,
+  cancelReservationPayment,
+  confirmReservationPayment,
+  attemptOpenApp,
   onLogout,
   view,
   errors,
@@ -462,7 +612,7 @@ export function ReservationPublicView({
 
   return (
     <main className="mobile-detail-shell reservation-detail-shell">
-      <nav className="mobile-detail-topbar">
+      <nav className="plan-web-topbar">
         <button
           className="round-icon-button"
           type="button"
@@ -471,22 +621,40 @@ export function ReservationPublicView({
           ←
         </button>
         <img src={logo} alt="Pul" className="brand-logo" />
-        <button className="ghost-button compact" type="button">
-          Reserva
+        <button
+          className="ghost-button compact"
+          type="button"
+          onClick={() => attemptOpenApp(invite, "manual-open")}
+        >
+          Abrir app
         </button>
       </nav>
 
       <section className="reservation-detail-grid">
-        <section className="reservation-venue-card">
-          <div className="reservation-venue-image">
-            <img src={venue.imagen || invite.image || defaultAvatar} alt="" />
-          </div>
-          <div className="reservation-venue-copy">
-            <p className="eyebrow">Detalle de reservación</p>
-            <h1>{venue.nombre || invite.title}</h1>
-            <span>{venue.direccion || invite.address}</span>
-          </div>
-        </section>
+        <div className="plan-web-media-column">
+          <section className="reservation-venue-card">
+            <div className="reservation-venue-image">
+              <img src={venue.imagen || invite.image || defaultAvatar} alt="" />
+            </div>
+            <div className="reservation-venue-copy">
+              <p className="eyebrow">Detalle de reservación</p>
+              <h1>{venue.nombre || invite.title}</h1>
+              <span>{venue.direccion || invite.address}</span>
+            </div>
+          </section>
+
+          {Number(reservation.credito || 0) > 0 && (
+            <section className="mobile-soft-card accent">
+              <strong>
+                Crédito a favor {formatCurrency(reservation.credito)}
+              </strong>
+              <p>
+                Este crédito es exclusivo para esta reservación. Si no lo
+                utilizas, se perderá.
+              </p>
+            </section>
+          )}
+        </div>
 
         {authUser ? (
           <section className="reservation-auth-card reservation-auth-choice">
@@ -505,7 +673,11 @@ export function ReservationPublicView({
                 <p>{authUser.email}</p>
               </div>
             </div>
-            <button className="text-button reservation-logout-button" type="button" onClick={onLogout}>
+            <button
+              className="text-button reservation-logout-button"
+              type="button"
+              onClick={onLogout}
+            >
               Cerrar sesión
             </button>
           </section>
@@ -535,18 +707,6 @@ export function ReservationPublicView({
           </div>
         )}
 
-        {Number(reservation.credito || 0) > 0 && (
-          <section className="mobile-soft-card accent">
-            <strong>
-              Crédito a favor {formatCurrency(reservation.credito)}
-            </strong>
-            <p>
-              Este crédito es exclusivo para esta reservación. Si no lo
-              utilizas, se perderá.
-            </p>
-          </section>
-        )}
-
         {pendingPaymentRequest && (
           <section className="mobile-payment-card">
             <div className="mobile-payment-head">
@@ -566,15 +726,21 @@ export function ReservationPublicView({
               onClick={payPendingReservationRequest}
               disabled={reservationActionLoading === "paying"}
             >
-            {reservationActionLoading === "paying"
-              ? "Abriendo pago..."
-              : "Pagar ahora"}
-          </button>
-          <StatusNote message={planJoinMessage} flowStatus={flowStatus} />
-        </section>
-      )}
+              {reservationActionLoading === "paying"
+                ? "Abriendo pago..."
+                : "Pagar ahora"}
+            </button>
+            <StatusNote message={planJoinMessage} flowStatus={flowStatus} />
+          </section>
+        )}
 
-        <section className="mobile-section">
+        <section
+          className={`mobile-section reservation-members-section ${
+            !authUser && (view === "login" || view === "register")
+              ? "with-auth-panel"
+              : ""
+          }`}
+        >
           <div className="mobile-section-head">
             <h2>Integrantes de la reservación</h2>
             <span>
@@ -609,19 +775,19 @@ export function ReservationPublicView({
                 type="button"
                 onClick={joinCurrentReservation}
                 disabled={reservationActionLoading === "joining"}
-            >
-              {reservationActionLoading === "joining"
-                ? "Uniendo..."
-                : "Unirme"}
-            </button>
-          </div>
-        )}
-        {!pendingPaymentRequest && planJoinMessage && (
-          <StatusNote message={planJoinMessage} flowStatus={flowStatus} />
-        )}
+              >
+                {reservationActionLoading === "joining"
+                  ? "Uniendo..."
+                  : "Unirme"}
+              </button>
+            </div>
+          )}
+          {!pendingPaymentRequest && planJoinMessage && (
+            <StatusNote message={planJoinMessage} flowStatus={flowStatus} />
+          )}
 
-        {!authUser && (
-          <div className="reservation-join-card">
+          {!authUser && (
+            <div className="reservation-join-card">
               <span aria-hidden="true">
                 <ReservationIcon name="user" />
               </span>
@@ -676,7 +842,7 @@ export function ReservationPublicView({
           </div>
         )}
 
-        <section className="mobile-card-grid">
+        <section className="mobile-card-grid reservation-info-grid">
           <InfoRow icon="users" label="Personas">
             {capacity || "Por confirmar"}
             {mesa.zona ? ` · ${mesa.zona}` : ""}
@@ -695,7 +861,8 @@ export function ReservationPublicView({
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Mapa
+                  <ReservationIcon name="map" />
+                 Ver en mapa
                 </a>
               ) : null
             }
@@ -883,6 +1050,13 @@ export function ReservationPublicView({
           </section>
         </div>
       )}
+      <ReservationPaymentModal
+        paymentSession={reservationPaymentSession}
+        paymentLoading={reservationPaymentLoading}
+        authUser={authUser}
+        onCancel={cancelReservationPayment}
+        onConfirm={confirmReservationPayment}
+      />
     </main>
   );
 }

@@ -15,6 +15,8 @@ export const BACKEND_URL =
 export const STRIPE_CHECKOUT_ENDPOINT =
   import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT ||
   `${BACKEND_URL}/stripe/create-checkout-session`;
+export const STRIPE_PAYMENT_INTENT_ENDPOINT =
+  import.meta.env.VITE_STRIPE_PAYMENT_INTENT_ENDPOINT || `${BACKEND_URL}/stripe/buy`;
 export const PUBLIC_INVITE_ENDPOINT =
   import.meta.env.VITE_PUBLIC_INVITE_ENDPOINT || `${BACKEND_URL}/public`;
 export const EMAIL_CONFIRMATION_ENDPOINT =

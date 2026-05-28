@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  onAuthStateChanged,
-  signOut,
-  updateProfile,
-} from "firebase/auth";
+import { onAuthStateChanged, signOut, updateProfile } from "firebase/auth";
 import {
   collection,
   doc,
   documentId,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
   query,
+  updateDoc,
 } from "firebase/firestore";
 import logo from "../../../assets/logo.png";
 import { auth, authPersistenceReady, db } from "../../../firebase";
@@ -24,16 +22,18 @@ import {
   PLAY_STORE_URL,
   RESERVA_RESPONSE_ENDPOINT,
   STRIPE_CHECKOUT_ENDPOINT,
+  STRIPE_PAYMENT_INTENT_ENDPOINT,
 } from "../../../shared/constants/appConfig";
 import {
   attemptOpenApp,
   isMobileBrowser,
 } from "../../../shared/utils/deepLinks";
-import {
-  formatPlanVisibility,
-} from "../../../shared/utils/formatters";
+import { formatPlanVisibility } from "../../../shared/utils/formatters";
 import { postJson } from "../../../shared/utils/http";
-import { getUniqueIds, normalizeUserSummary } from "../../../shared/utils/users";
+import {
+  getUniqueIds,
+  normalizeUserSummary,
+} from "../../../shared/utils/users";
 import {
   validateGuestForm,
   validateLoginForm,
@@ -65,8 +65,10 @@ import PublicInviteView from "./PublicInviteView";
 import { fetchEventParticipantsPage } from "../../events/services/eventParticipants.service";
 import {
   beginReservationPayment,
+  completeReservationPayment,
   getPendingPaymentRequest,
   joinReservationTransaction,
+  releaseReservationPaymentLock,
   shouldHideReservationForUser,
 } from "../../reservations/services/reservationParticipation.service";
 import { sendOneSignalNotification } from "../../../shared/services/notifications.service";
@@ -208,6 +210,10 @@ function PublicInviteScreen() {
   const [eventAttendeesHasMore, setEventAttendeesHasMore] = useState(false);
   const [eventAttendeesLoading, setEventAttendeesLoading] = useState(false);
   const [reservationActionLoading, setReservationActionLoading] = useState("");
+  const [reservationPaymentSession, setReservationPaymentSession] =
+    useState(null);
+  const [reservationPaymentLoading, setReservationPaymentLoading] =
+    useState(false);
   const [reservationIndividualAccount, setReservationIndividualAccount] =
     useState(null);
   const [authUser, setAuthUser] = useState(() => {
@@ -229,10 +235,13 @@ function PublicInviteScreen() {
     solicitudes: [],
   });
 
-  const showNotFound = useCallback((kind = context.kind) => {
-    setNotFoundKind(kind);
-    setInviteStatus("missing");
-  }, [context.kind]);
+  const showNotFound = useCallback(
+    (kind = context.kind) => {
+      setNotFoundKind(kind);
+      setInviteStatus("missing");
+    },
+    [context.kind],
+  );
 
   useEffect(() => {
     if (!notFoundKind) return undefined;
@@ -252,13 +261,15 @@ function PublicInviteScreen() {
           if (!firebaseUser) return;
 
           const token = await firebaseUser.getIdToken();
+          const profile = await fetchUserProfile(firebaseUser.uid);
           const nextUser = buildWebUserSummary({
+            ...profile,
             id: firebaseUser.uid,
             uid: firebaseUser.uid,
             idToken: token,
             refreshToken: firebaseUser.refreshToken,
-            displayName: firebaseUser.displayName,
-            email: firebaseUser.email,
+            displayName: profile?.nombre || firebaseUser.displayName,
+            email: profile?.email || firebaseUser.email,
             photoURL: firebaseUser.photoURL,
             method: "web-login",
           });
@@ -272,7 +283,8 @@ function PublicInviteScreen() {
       )
       .then((unsubscribe) => {
         unsubscribeAuth = unsubscribe;
-        if (!mounted && typeof unsubscribeAuth === "function") unsubscribeAuth();
+        if (!mounted && typeof unsubscribeAuth === "function")
+          unsubscribeAuth();
       })
       .catch((error) => {
         console.warn(`${DEBUG_PREFIX} No se pudo restaurar sesión`, error);
@@ -421,7 +433,10 @@ function PublicInviteScreen() {
             return;
           }
 
-          const normalized = normalizePlan({ fields: null, ...snap.data() }, snap.id);
+          const normalized = normalizePlan(
+            { fields: null, ...snap.data() },
+            snap.id,
+          );
           const legacyMembers = normalized.integrantesIds || [];
           const legacyRequests = normalized.solicitudesIds || [];
           const requestIds = planIdsRef.current.solicitudes.length
@@ -679,7 +694,9 @@ function PublicInviteScreen() {
       setInvite((current) => {
         if (current.kind !== "plan") return current;
         const hostUser =
-          usersMap.get(current.hostId) || current.hostUser || normalizeUserSummary(current.hostId);
+          usersMap.get(current.hostId) ||
+          current.hostUser ||
+          normalizeUserSummary(current.hostId);
         const attendees = (current.integrantesIds || [])
           .map((id) => usersMap.get(id) || normalizeUserSummary(id))
           .filter(Boolean);
@@ -780,6 +797,19 @@ function PublicInviteScreen() {
         .map((tag) => String(tag).replace(/^#/, "")),
     ),
   ].slice(0, 4);
+
+  useEffect(() => {
+    if (!isReserva || !planJoinMessage) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      setPlanJoinMessage("");
+      if (flowStatus === "plan-join-error" || flowStatus === "payment-error") {
+        setFlowStatus("idle");
+      }
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [flowStatus, isReserva, planJoinMessage]);
 
   if (isComingSoonView) {
     return (
@@ -904,6 +934,40 @@ function PublicInviteScreen() {
     }
   };
 
+  async function fetchUserProfile(uid) {
+    if (!uid) return null;
+
+    const snap = await getDoc(doc(db, "usuarios", uid));
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+  }
+
+  const toStripeAmount = (amount) => {
+    const fixed = Number(amount || 0).toFixed(2);
+    return Number(fixed.replace(".", ""));
+  };
+
+  const ensureStripeCustomer = async (user) => {
+    if (user?.idStripe) return user.idStripe;
+
+    const idStripe = await createStripeCustomer({
+      name: user?.nombre || user?.displayName || user?.email || "Pul",
+      email: user?.email || "",
+      phone: user?.telefono || "",
+    });
+
+    if (!idStripe) {
+      throw new Error("No se pudo crear el cliente de Stripe.");
+    }
+
+    const nextUser = { ...user, idStripe };
+    await updateDoc(doc(db, "usuarios", user.id || user.uid), { idStripe }).catch(
+      () => {},
+    );
+    localStorage.setItem("pulExpressUser", JSON.stringify(nextUser));
+    setAuthUser(nextUser);
+    return idStripe;
+  };
+
   /** Persiste el perfil completo del usuario en el backend de Pul. */
   const registerUser = async (uid, data) => {
     const response = await fetch(`${BACKEND_URL}/users/register-user`, {
@@ -1013,6 +1077,7 @@ function PublicInviteScreen() {
         id: firebaseUserLogin.localId,
         uid: firebaseUserLogin.localId,
         idToken: firebaseUserLogin.idToken,
+        idStripe,
         nombre:
           firebaseUserLogin.displayName ||
           registerForm.nombre.trim() ||
@@ -1046,11 +1111,16 @@ function PublicInviteScreen() {
         loginForm.email.trim(),
         loginForm.password,
       );
+      const profile = await fetchUserProfile(firebaseUser.localId);
       completeAuth({
+        ...profile,
         id: firebaseUser.localId,
         uid: firebaseUser.localId,
         idToken: firebaseUser.idToken,
-        nombre: firebaseUser.displayName || loginForm.email.split("@")[0],
+        nombre:
+          profile?.nombre ||
+          firebaseUser.displayName ||
+          loginForm.email.split("@")[0],
         email: firebaseUser.email || loginForm.email.trim(),
         method: "web-login",
         createdAt: new Date().toISOString(),
@@ -1074,7 +1144,6 @@ function PublicInviteScreen() {
       purchase,
     });
   };
-
 
   /** Une al usuario actual al plan o inicia solicitud/lista de espera segun reglas. */
   const joinCurrentPlan = async () => {
@@ -1125,14 +1194,23 @@ function PublicInviteScreen() {
   /** Gestiona solicitudes pendientes cuando el usuario autenticado es anfitrion. */
   const resolveRequest = async (user, action) => {
     if (!authUser || !invite.id || !isPlan) return;
-    setFlowStatus(action === "accept" ? "accepting-request" : "rejecting-request");
+    setFlowStatus(
+      action === "accept" ? "accepting-request" : "rejecting-request",
+    );
     setPlanJoinMessage("");
     try {
-      const result = await resolvePlanRequest(invite.id, authUser, user, action);
+      const result = await resolvePlanRequest(
+        invite.id,
+        authUser,
+        user,
+        action,
+      );
       setPlanJoinMessage(result?.message || "Solicitud actualizada.");
       setFlowStatus("plan-updated");
     } catch (error) {
-      setPlanJoinMessage(error.message || "No se pudo actualizar la solicitud.");
+      setPlanJoinMessage(
+        error.message || "No se pudo actualizar la solicitud.",
+      );
       setFlowStatus("plan-join-error");
     }
   };
@@ -1140,14 +1218,23 @@ function PublicInviteScreen() {
   /** Gestiona aceptacion o retiro de usuarios en lista de espera. */
   const resolveWaitlist = async (user, action) => {
     if (!authUser || !invite.id || !isPlan) return;
-    setFlowStatus(action === "accept" ? "accepting-waitlist" : "rejecting-waitlist");
+    setFlowStatus(
+      action === "accept" ? "accepting-waitlist" : "rejecting-waitlist",
+    );
     setPlanJoinMessage("");
     try {
-      const result = await resolveWaitlistUser(invite.id, authUser, user, action);
+      const result = await resolveWaitlistUser(
+        invite.id,
+        authUser,
+        user,
+        action,
+      );
       setPlanJoinMessage(result?.message || "Lista de espera actualizada.");
       setFlowStatus("plan-updated");
     } catch (error) {
-      setPlanJoinMessage(error.message || "No se pudo actualizar la lista de espera.");
+      setPlanJoinMessage(
+        error.message || "No se pudo actualizar la lista de espera.",
+      );
       setFlowStatus("plan-join-error");
     }
   };
@@ -1345,6 +1432,7 @@ function PublicInviteScreen() {
 
     setReservationActionLoading("joining");
     setPlanJoinMessage("");
+    setFlowStatus("idle");
     try {
       const result = await joinReservationTransaction(invite.id, authUser);
       setPlanJoinMessage("Ya formas parte de esta reservación.");
@@ -1375,38 +1463,135 @@ function PublicInviteScreen() {
       return;
     }
 
-    const request = getPendingPaymentRequest(invite.raw, authUser.id);
-    if (!request) {
+    const pendingPaymentRequest = getPendingPaymentRequest(
+      invite.raw,
+      authUser.id,
+    );
+    if (!pendingPaymentRequest) {
       setPlanJoinMessage("Este pago ya no está pendiente.");
       return;
     }
 
     setReservationActionLoading("paying");
-    try {
-      const paymentClaim = await beginReservationPayment(invite.id, authUser.id);
-      const result = await postJson(STRIPE_CHECKOUT_ENDPOINT, {
-        reservaId: invite.id,
-        amount: paymentClaim.request.monto,
-        user: authUser,
-        paymentRequestId: authUser.id,
-        paymentLockId: paymentClaim.lockId,
-        successUrl: `${window.location.origin}${window.location.pathname}?reservaId=${invite.id}&payment=success`,
-        cancelUrl: window.location.href,
-      });
+    setPlanJoinMessage("");
+    setFlowStatus("idle");
+    let paymentLockId = "";
+    let checkoutStarted = false;
 
-      const checkoutUrl = getCheckoutUrl(result);
-      if (checkoutUrl) {
-        window.location.href = checkoutUrl;
+    try {
+      const paymentClaim = await beginReservationPayment(
+        invite.id,
+        authUser.id,
+      );
+      paymentLockId = paymentClaim.lockId;
+      const idStripe = await ensureStripeCustomer(authUser);
+
+      const result = await postJson(STRIPE_PAYMENT_INTENT_ENDPOINT, {
+        idStripe,
+        amount: toStripeAmount(paymentClaim.request.monto),
+        captureMethod: "manual",
+        metadata: {
+          id_ref: invite.id,
+          vista: "detalle_reserva_pago_pendiente",
+          user_id: authUser.id,
+          payment_request_id: authUser.id,
+          payment_lock_id: paymentLockId,
+        },
+      });      
+
+      if (!result?.paymentIntent || !result?.publishableKey) {
+        await releaseReservationPaymentLock(
+          invite.id,
+          authUser.id,
+          paymentLockId,
+        );
+        paymentLockId = "";
+        setFlowStatus("payment-error");
+        setPlanJoinMessage(
+          "Stripe respondió sin datos para mostrar el formulario de pago.",
+        );
         return;
       }
 
-      setPlanJoinMessage(
-        "Stripe respondió sin URL de checkout. Revisa la respuesta del backend.",
-      );
+      checkoutStarted = true;
+      setReservationPaymentSession({
+        clientSecret: result.paymentIntent,
+        paymentIntentId: result.paymentIntentId,
+        publishableKey: result.publishableKey,
+        customerSessionClientSecret: result.customerSessionClientSecret,
+        customer: result.customer || idStripe,
+        lockId: paymentLockId,
+        amount: paymentClaim.request.monto,
+        request: paymentClaim.request,
+      });
     } catch (error) {
+      if (!checkoutStarted && paymentLockId) {
+        await releaseReservationPaymentLock(
+          invite.id,
+          authUser.id,
+          paymentLockId,
+        );
+      }
       setPlanJoinMessage(error.message || "No se pudo iniciar el pago.");
+      setFlowStatus("payment-error");
     } finally {
       setReservationActionLoading("");
+    }
+  };
+
+  const cancelReservationPayment = async () => {
+    const session = reservationPaymentSession;
+    setReservationPaymentSession(null);
+    if (!session?.lockId || !authUser?.id || !invite.id) return;
+
+    await releaseReservationPaymentLock(
+      invite.id,
+      authUser.id,
+      session.lockId,
+    ).catch((error) => {
+      console.warn(`${DEBUG_PREFIX} No se pudo liberar el lock de pago`, error);
+    });
+  };
+
+  const confirmReservationPayment = async (paymentIntent) => {
+    const session = reservationPaymentSession;
+    if (!session?.lockId || !authUser?.id || !invite.id) return;
+
+    setReservationPaymentLoading(true);
+    setPlanJoinMessage("");
+    try {
+      await completeReservationPayment({
+        reservationId: invite.id,
+        userId: authUser.id,
+        lockId: session.lockId,
+        paymentIntentId: paymentIntent?.id || session.paymentIntentId || "",
+        payer: {
+          fecha: new Date(),
+          id: authUser.id,
+          nombre:
+            authUser.nombre || session.request?.nombre || authUser.email || "",
+          imagen: authUser.imagen || session.request?.imagen || "",
+          monto: session.amount,
+        },
+      });
+
+      if (invite.raw?.anfitrion?.id && invite.raw.anfitrion.id !== authUser.id) {
+        await sendOneSignalNotification(
+          [invite.raw.anfitrion.id],
+          `Pago recibido en ${invite.raw.negocio?.nombre || "tu reservación"}`,
+          `${authUser.nombre || "Un invitado"} pagó su parte de la reservación.`,
+          { view: "", id: invite.id },
+        );
+      }
+
+      setReservationPaymentSession(null);
+      setPlanJoinMessage("Tu pago quedó registrado correctamente.");
+      setFlowStatus("paid");
+    } catch (error) {
+      setPlanJoinMessage(error.message || "El pago no se completó.");
+      setFlowStatus("payment-error");
+    } finally {
+      setReservationPaymentLoading(false);
     }
   };
 
@@ -1489,6 +1674,10 @@ function PublicInviteScreen() {
       joinCurrentReservation={joinCurrentReservation}
       payPendingReservationRequest={payPendingReservationRequest}
       reservationActionLoading={reservationActionLoading}
+      reservationPaymentSession={reservationPaymentSession}
+      reservationPaymentLoading={reservationPaymentLoading}
+      cancelReservationPayment={cancelReservationPayment}
+      confirmReservationPayment={confirmReservationPayment}
       view={view}
       flowStatus={flowStatus}
       purchasableItems={purchasableItems}

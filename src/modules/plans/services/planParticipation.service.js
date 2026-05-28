@@ -99,6 +99,7 @@ export function buildWebUserSummary(user) {
       "Pul",
     email: user?.email || "",
     imagen: user?.imagen || user?.photoURL || "",
+    idStripe: user?.idStripe || "",
     method: user?.method || "web-login",
   };
 }
