@@ -1,0 +1,1130 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  onAuthStateChanged,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
+import {
+  collection,
+  doc,
+  documentId,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+} from "firebase/firestore";
+import logo from "../../../assets/logo.png";
+import { auth, authPersistenceReady, db } from "../../../firebase";
+import {
+  APP_STORE_URL,
+  BACKEND_URL,
+  DEBUG_PREFIX,
+  EMAIL_CONFIRMATION_ENDPOINT,
+  EVENT_CHECKOUT_ENDPOINT,
+  PLAY_STORE_URL,
+  RESERVA_RESPONSE_ENDPOINT,
+  STRIPE_CHECKOUT_ENDPOINT,
+} from "../../../shared/constants/appConfig";
+import {
+  attemptOpenApp,
+  isMobileBrowser,
+} from "../../../shared/utils/deepLinks";
+import {
+  formatPlanVisibility,
+} from "../../../shared/utils/formatters";
+import { postJson } from "../../../shared/utils/http";
+import { getUniqueIds, normalizeUserSummary } from "../../../shared/utils/users";
+import {
+  validateGuestForm,
+  validateLoginForm,
+  validateRegisterForm,
+} from "../../../shared/utils/validators";
+import {
+  signInWithFirebasePassword,
+  signUpWithFirebasePassword,
+} from "../../auth/services/firebaseAuth.service";
+import PlanWebView from "../../plans/components/PlanWebView";
+import {
+  buildWebUserSummary,
+  fetchPlanMembersPage,
+  fetchUsersByIds,
+  joinPlanTransaction,
+  leavePlanTransaction,
+  resolvePlanRequest,
+  resolveWaitlistUser,
+} from "../../plans/services/planParticipation.service";
+import {
+  fallbackInvite,
+  fetchInvite,
+  getInviteContext,
+  normalizePlan,
+} from "../services/invite.service";
+import PublicInviteView from "./PublicInviteView";
+
+const initialForm = {
+  nombre: "",
+  email: "",
+  telefono: "",
+  password: "",
+};
+
+const initialLoginForm = {
+  email: "",
+  password: "",
+};
+
+const initialGuestForm = {
+  nombre: "",
+  email: "",
+  telefono: "",
+};
+
+/**
+ * Pantalla publica principal que orquesta invitaciones, auth, pagos y deep links.
+ */
+function PublicInviteScreen() {
+  const isComingSoonView =
+    window.location.pathname === "/" && window.location.search === "";
+  const [context] = useState(getInviteContext);
+  const [invite, setInvite] = useState(() => fallbackInvite(context));
+  const [inviteStatus, setInviteStatus] = useState(
+    context.id ? "loading" : "missing",
+  );
+  const [view, setView] = useState("landing");
+  const [registerForm, setRegisterForm] = useState(initialForm);
+  const [loginForm, setLoginForm] = useState(initialLoginForm);
+  const [guestForm, setGuestForm] = useState(initialGuestForm);
+  const [selectedItemId, setSelectedItemId] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [errors, setErrors] = useState({});
+  const [planJoinMessage, setPlanJoinMessage] = useState("");
+  const [planRequests, setPlanRequests] = useState([]);
+  const [planWaitlist, setPlanWaitlist] = useState([]);
+  const [planActivities, setPlanActivities] = useState([]);
+  const [planUsersById, setPlanUsersById] = useState(new Map());
+  const [authUser, setAuthUser] = useState(() => {
+    const cached =
+      localStorage.getItem("pulExpressUser") ||
+      sessionStorage.getItem("pulExpressUser");
+    return cached ? JSON.parse(cached) : null;
+  });
+  const [flowStatus, setFlowStatus] = useState(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("payment") !== "success") return "idle";
+    return context.kind === "event" ? "event-paid" : "paid";
+  });
+  const [appPrompt, setAppPrompt] = useState(() =>
+    context.id && isMobileBrowser() ? "opening" : "fallback",
+  );
+  const planIdsRef = useRef({
+    integrantes: [],
+    solicitudes: [],
+  });
+
+  useEffect(() => {
+    let mounted = true;
+    let unsubscribeAuth = null;
+
+    authPersistenceReady
+      .then(() =>
+        onAuthStateChanged(auth, async (firebaseUser) => {
+          if (!mounted) return;
+          if (!firebaseUser) return;
+
+          const token = await firebaseUser.getIdToken();
+          const nextUser = buildWebUserSummary({
+            id: firebaseUser.uid,
+            uid: firebaseUser.uid,
+            idToken: token,
+            refreshToken: firebaseUser.refreshToken,
+            displayName: firebaseUser.displayName,
+            email: firebaseUser.email,
+            photoURL: firebaseUser.photoURL,
+            method: "web-login",
+          });
+          const cached = localStorage.getItem("pulExpressUser");
+          const cachedUser = cached ? JSON.parse(cached) : {};
+          const mergedUser = { ...cachedUser, ...nextUser, idToken: token };
+          localStorage.setItem("pulExpressUser", JSON.stringify(mergedUser));
+          sessionStorage.removeItem("pulExpressUser");
+          setAuthUser(mergedUser);
+        }),
+      )
+      .then((unsubscribe) => {
+        unsubscribeAuth = unsubscribe;
+        if (!mounted && typeof unsubscribeAuth === "function") unsubscribeAuth();
+      })
+      .catch((error) => {
+        console.warn(`${DEBUG_PREFIX} No se pudo restaurar sesión`, error);
+      });
+
+    return () => {
+      mounted = false;
+      if (typeof unsubscribeAuth === "function") unsubscribeAuth();
+    };
+  }, []);
+
+  const userDataComplete = {
+    id: "",
+    idStripe: "",
+    email: "",
+    nombre: "",
+    apellidos: "",
+    fechaNacimiento: "",
+    edad: 0,
+    telefono: 0,
+    actividad: "",
+    situacionSentimental: "",
+    bebidaFavorita: "",
+    comidaFavorita: "",
+    universidad: "",
+    direccion: "",
+    lugarFavorito: "",
+    genero: "",
+    gustos: {},
+    cartera: [],
+    amigos: [],
+    intereses: [],
+    salir: [],
+    hacerAmigos: [],
+    tenerCitas: [],
+    econtrarQueHacer: false,
+    viewInteractionInfo: true,
+    viewQrInfo: true,
+    images: [],
+    imagen: "",
+    zona: "PUEBLA",
+    estatus: true,
+    estado: "",
+    distancia: "",
+    profesion: "",
+    perfilPublico: "",
+    ubicacion: "",
+    descripcion: "",
+    tooltips: {
+      qr: false,
+      pulers: false,
+      ayuda: false,
+      crearPlan: false,
+      credito: false,
+      division: false,
+      invitados: false,
+      unirseAPlan: false,
+    },
+    nombreBusqueda: [],
+    method: "",
+    createdAt: null,
+  };
+
+  useEffect(() => {
+    console.info(`${DEBUG_PREFIX} Estado de invitacion`, {
+      context,
+      inviteStatus,
+      invite,
+    });
+  }, [context, invite, inviteStatus]);
+
+  useEffect(() => {
+    if (!context.id) {
+      console.warn(`${DEBUG_PREFIX} No hay ID en la URL`, context);
+      return;
+    }
+
+    let ignore = false;
+    fetchInvite(context)
+      .then((data) => {
+        if (ignore) return;
+        console.info(`${DEBUG_PREFIX} Invitacion lista para render`, data);
+        setInvite(data);
+        setInviteStatus("ready");
+      })
+      .catch((error) => {
+        if (ignore) return;
+        console.error(`${DEBUG_PREFIX} Usando fallback por error al cargar`, {
+          context,
+          error,
+        });
+        setInvite(fallbackInvite(context));
+        setInviteStatus("fallback");
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [context]);
+
+  useEffect(() => {
+    if (!context.id || context.kind !== "plan") return;
+
+    if (!authUser) {
+      planIdsRef.current = { integrantes: [], solicitudes: [] };
+      return;
+    }
+
+    planIdsRef.current = { integrantes: [], solicitudes: [] };
+    let listenersActive = true;
+
+    const planRef = doc(db, "planes", context.id);
+    const topMembersRef = query(
+      collection(db, "planes", context.id, "integrantes"),
+      orderBy(documentId()),
+      limit(10),
+    );
+    const requestsRef = collection(db, "planes", context.id, "solicitudes");
+    const waitlistRef = collection(db, "planes", context.id, "listaEspera");
+    const activitiesRef = query(
+      collection(db, "planes", context.id, "actividades"),
+      orderBy("created_at", "desc"),
+      limit(20),
+    );
+
+    const applyRequestIds = (ids) => {
+      planIdsRef.current = { ...planIdsRef.current, solicitudes: ids };
+      setInvite((current) => {
+        if (current.kind !== "plan") return current;
+        return {
+          ...current,
+          solicitudesIds: ids,
+          requests: ids.length,
+        };
+      });
+    };
+
+    const unsubscribes = [
+      onSnapshot(
+        planRef,
+        (snap) => {
+          if (!snap.exists()) {
+            setInvite(fallbackInvite(context));
+            setInviteStatus("missing");
+            return;
+          }
+
+          const normalized = normalizePlan({ fields: null, ...snap.data() }, snap.id);
+          const legacyMembers = normalized.integrantesIds || [];
+          const legacyRequests = normalized.solicitudesIds || [];
+          const requestIds = planIdsRef.current.solicitudes.length
+            ? planIdsRef.current.solicitudes
+            : legacyRequests;
+
+          setInvite((current) => {
+            const firstMembers = planIdsRef.current.integrantes || [];
+            const visibleMembers = firstMembers.length
+              ? firstMembers
+              : legacyMembers.slice(0, 10);
+            return {
+              ...normalized,
+              integrantesIds: visibleMembers,
+              solicitudesIds: requestIds,
+              members: normalized.members,
+              requests: requestIds.length,
+              attendees: firstMembers.length
+                ? current.attendees
+                : normalized.attendees.slice(0, 10),
+            };
+          });
+          setInviteStatus("ready");
+        },
+        (error) => {
+          console.error(`${DEBUG_PREFIX} Error en listener de plan`, error);
+          setInviteStatus("fallback");
+        },
+      ),
+      onSnapshot(topMembersRef, async (snap) => {
+        const firstMemberIds = getUniqueIds(
+          snap.docs.map((item) => item.data()?.userId || item.id),
+        );
+        planIdsRef.current = {
+          ...planIdsRef.current,
+          integrantes: firstMemberIds,
+        };
+
+        const usersMap = await fetchUsersByIds(firstMemberIds);
+        if (!listenersActive) return;
+        setPlanUsersById((current) => {
+          const next = new Map(current);
+          usersMap.forEach((user, id) => next.set(id, user));
+          return next;
+        });
+        setInvite((current) => {
+          if (current.kind !== "plan") return current;
+          return {
+            ...current,
+            integrantesIds: firstMemberIds,
+            attendees: firstMemberIds.map(
+              (id) => usersMap.get(id) || normalizeUserSummary(id),
+            ),
+          };
+        });
+      }),
+      onSnapshot(requestsRef, (snap) => {
+        setPlanRequests(
+          snap.docs.map((item) => ({
+            id: item.id,
+            userId: item.data()?.userId || item.id,
+            created_at: item.data()?.created_at,
+          })),
+        );
+        applyRequestIds(snap.docs.map((item) => item.id));
+      }),
+      onSnapshot(waitlistRef, (snap) => {
+        setPlanWaitlist(
+          snap.docs.map((item) => ({
+            id: item.id,
+            userId: item.data()?.userId || item.id,
+            created_at: item.data()?.created_at,
+          })),
+        );
+      }),
+      onSnapshot(activitiesRef, (snap) => {
+        setPlanActivities(
+          snap.docs.map((item) => ({
+            id: item.id,
+            ...item.data(),
+          })),
+        );
+      }),
+    ];
+
+    return () => {
+      listenersActive = false;
+      unsubscribes.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [authUser, context]);
+
+  const planUserIdsKey = [
+    invite.hostId,
+    ...(invite.integrantesIds || []),
+    ...(invite.solicitudesIds || []),
+    ...planWaitlist.map((item) => item.userId || item.id),
+  ]
+    .filter(Boolean)
+    .join("|");
+
+  useEffect(() => {
+    if (context.kind !== "plan") return;
+
+    if (!authUser) {
+      return;
+    }
+
+    let ignore = false;
+    const ids = planUserIdsKey ? planUserIdsKey.split("|") : [];
+    fetchUsersByIds(ids).then((usersMap) => {
+      if (ignore) return;
+      setPlanUsersById(usersMap);
+      setInvite((current) => {
+        if (current.kind !== "plan") return current;
+        const hostUser =
+          usersMap.get(current.hostId) || current.hostUser || normalizeUserSummary(current.hostId);
+        const attendees = (current.integrantesIds || [])
+          .map((id) => usersMap.get(id) || normalizeUserSummary(id))
+          .filter(Boolean);
+        return {
+          ...current,
+          host: hostUser.nombre || current.host,
+          hostImage: hostUser.imagen || current.hostImage,
+          hostUser,
+          attendees,
+        };
+      });
+    });
+
+    return () => {
+      ignore = true;
+    };
+  }, [authUser, context.kind, planUserIdsKey]);
+
+  useEffect(() => {
+    if (!context.id || context.kind === "plan") return;
+
+    const intervalId = window.setInterval(() => {
+      fetchInvite(context)
+        .then((data) => {
+          setInvite(data);
+          setInviteStatus("ready");
+        })
+        .catch((error) => {
+          console.warn(`${DEBUG_PREFIX} No se pudo refrescar el plan`, error);
+        });
+    }, 12000);
+
+    return () => window.clearInterval(intervalId);
+  }, [context]);
+
+  useEffect(() => {
+    if (!context.id || !isMobileBrowser() || inviteStatus === "loading") return;
+
+    const timeoutId = window.setTimeout(() => {
+      attemptOpenApp(invite);
+    }, 450);
+
+    const fallbackId = window.setTimeout(() => {
+      if (!document.hidden && document.hasFocus()) setAppPrompt("fallback");
+    }, 1800);
+
+    const markAsOpened = () => {
+      setAppPrompt("opened");
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) markAsOpened();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("blur", markAsOpened);
+    window.addEventListener("pagehide", markAsOpened);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.clearTimeout(fallbackId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("blur", markAsOpened);
+      window.removeEventListener("pagehide", markAsOpened);
+    };
+  }, [context.id, invite, inviteStatus]);
+
+  const isReserva = invite.kind === "reserva";
+  const isEventDetail = invite.kind === "eventDetail";
+  const usesReservaLayout = isReserva || isEventDetail;
+  const isEvent = invite.kind === "event";
+  const isPlan = invite.kind === "plan";
+  const purchasableItems = isEvent ? [...invite.tickets, ...invite.tables] : [];
+  const selectedItem =
+    purchasableItems.find((item) => item.id === selectedItemId) ||
+    purchasableItems[0];
+  const guestTotal = selectedItem ? selectedItem.price * quantity : 0;
+  const spotsLeft =
+    invite.capacity > 0 ? Math.max(invite.capacity - invite.members, 0) : null;
+  const heroImage = invite.image || invite.hostImage;
+  const displayTags = [
+    ...new Set(
+      [
+        ...(Array.isArray(invite.tags) ? invite.tags : []),
+        isEvent
+          ? "Evento"
+          : isEventDetail
+            ? "Detalle de evento"
+            : isReserva
+              ? "Reservacion"
+              : "Plan",
+        isPlan ? formatPlanVisibility(invite.visibility) : invite.host,
+      ]
+        .filter(Boolean)
+        .map((tag) => String(tag).replace(/^#/, "")),
+    ),
+  ].slice(0, 4);
+
+  if (isComingSoonView) {
+    return (
+      <main className="coming-soon-shell">
+        <div className="coming-bg" />
+
+        <div className="coming-card">
+          <div className="logo-wrapper">
+            <img src={logo} alt="Pul" className="coming-soon-logo" />
+          </div>
+
+          <div className="badge-live">
+            <span className="dot-live" />
+            Próximamente
+          </div>
+
+          <h1 className="coming-title">
+            Estamos preparando algo <span>increíble</span>
+          </h1>
+
+          <p className="coming-description">
+            Muy pronto podrás descubrir nuevas experiencias, eventos,
+            reservaciones y planes compartidos con Pul.
+          </p>
+
+          <div className="coming-actions">
+            <a
+              href={APP_STORE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="store-btn"
+            >
+              App Store
+            </a>
+
+            <a
+              href={PLAY_STORE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="store-btn primary"
+            >
+              Google Play
+            </a>
+          </div>
+
+          <div className="coming-footer">
+            <div className="pulse-circle" />
+            <span>Pul · 2026</span>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  /** Sincroniza cambios del formulario de registro y limpia errores del campo. */
+  const onRegisterFieldChange = (event) => {
+    const { name, value } = event.target;
+    setRegisterForm((current) => ({ ...current, [name]: value }));
+    setErrors((current) => ({ ...current, [name]: undefined }));
+  };
+
+  /** Sincroniza cambios del formulario de login y limpia errores del campo. */
+  const onLoginFieldChange = (event) => {
+    const { name, value } = event.target;
+    setLoginForm((current) => ({ ...current, [name]: value }));
+    setErrors((current) => ({ ...current, [name]: undefined }));
+  };
+
+  /** Sincroniza cambios del formulario de comprador invitado. */
+  const onGuestFieldChange = (event) => {
+    const { name, value } = event.target;
+    setGuestForm((current) => ({ ...current, [name]: value }));
+    setErrors((current) => ({ ...current, [name]: undefined }));
+  };
+
+  /** Verifica en backend si el telefono ya pertenece a una cuenta existente. */
+  const validatePhone = async (telefono) => {
+    const response = await fetch(`${BACKEND_URL}/users/validate-phone`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        telefono,
+      }),
+    });
+
+    return await response.json();
+  };
+
+  /** Crea un cliente Stripe asociado al usuario express cuando el backend esta disponible. */
+  const createStripeCustomer = async ({ name, email, phone }) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/stripe/create-customer`, {
+        method: "POST",
+        headers: {
+          Accept: "*/*",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          description: `Cliente pul: ${name}`,
+          email,
+          name,
+          phone,
+        }),
+      });
+
+      const { info } = await response.json();
+
+      return info.id;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  };
+
+  /** Persiste el perfil completo del usuario en el backend de Pul. */
+  const registerUser = async (uid, data) => {
+    const response = await fetch(`${BACKEND_URL}/users/register-user`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        uid,
+        data,
+      }),
+    });
+
+    return await response.json();
+  };
+
+  /** Recarga la pagina despues de cambios de sesion para leer valores frescos. */
+  const reloadWithFreshSession = () => {
+    window.requestAnimationFrame(() => {
+      window.location.reload();
+    });
+  };
+
+  /** Guarda sesion web, actualiza estado local y dispara recarga controlada. */
+  const completeAuth = async (user) => {
+    const normalizedUser = buildWebUserSummary(user);
+    const persistedUser = { ...user, ...normalizedUser };
+    localStorage.setItem("pulExpressUser", JSON.stringify(persistedUser));
+    sessionStorage.removeItem("pulExpressUser");
+
+    setAuthUser(persistedUser);
+
+    setFlowStatus("authenticated");
+
+    setView(isReserva ? "payment" : isEvent ? "event-checkout" : "landing");
+
+    setPlanJoinMessage("");
+
+    reloadWithFreshSession();
+  };
+
+  /** Ejecuta el registro express completo: validacion, Firebase, Stripe, backend y login. */
+  const onRegisterSubmit = async (event) => {
+    event.preventDefault();
+
+    const nextErrors = validateRegisterForm(registerForm);
+
+    console.log(nextErrors);
+
+    setErrors(nextErrors);
+
+    if (Object.keys(nextErrors).length > 0) return;
+
+    try {
+      const phoneValidation = await validatePhone(registerForm.telefono.trim());
+
+      if (phoneValidation.exists) {
+        setErrors({
+          form: "Este teléfono ya está registrado.",
+        });
+
+        return;
+      }
+
+      setFlowStatus("registering");
+
+      const firebaseUser = await signUpWithFirebasePassword(
+        registerForm.email.trim().toLowerCase(),
+        registerForm.password,
+      );
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, {
+          displayName: registerForm.nombre.trim(),
+        });
+      }
+
+      // CREAR CUSTOMER STRIPE
+      const idStripe = await createStripeCustomer({
+        name: registerForm.nombre.trim(),
+        email: firebaseUser.email || registerForm.email.trim(),
+        phone: registerForm.telefono.trim(),
+      });
+
+      // OBJETO USUARIO
+      const userData = {
+        ...userDataComplete,
+        id: firebaseUser.localId,
+        idStripe,
+        nombre: registerForm.nombre.trim(),
+        email: firebaseUser.email || registerForm.email.trim().toLowerCase(),
+        telefono: registerForm.telefono.trim(),
+        method: "express-register",
+        createdAt: new Date().toISOString(),
+        nombreBusqueda: [registerForm.nombre.trim()],
+      };
+
+      console.log(userData);
+
+      await registerUser(userData.id, userData);
+
+      // FIRESTORE + LOGIN
+      const firebaseUserLogin = await signInWithFirebasePassword(
+        registerForm.email.trim().toLowerCase(),
+        registerForm.password,
+      );
+      completeAuth({
+        id: firebaseUserLogin.localId,
+        uid: firebaseUserLogin.localId,
+        idToken: firebaseUserLogin.idToken,
+        nombre:
+          firebaseUserLogin.displayName ||
+          registerForm.nombre.trim() ||
+          registerForm.email.split("@")[0],
+        email: firebaseUserLogin.email || loginForm.email.trim(),
+        method: "web-login",
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      setFlowStatus("register-error");
+
+      const message =
+        error.message === "EMAIL_EXISTS"
+          ? "Este email ya está registrado. Inicia sesión para continuar."
+          : error.message || "No se pudo crear la cuenta.";
+
+      setErrors({ form: message });
+    }
+  };
+
+  /** Ejecuta inicio de sesion con Firebase y completa la sesion web local. */
+  const onLoginSubmit = async (event) => {
+    event.preventDefault();
+    const nextErrors = validateLoginForm(loginForm);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    setFlowStatus("logging-in");
+    try {
+      const firebaseUser = await signInWithFirebasePassword(
+        loginForm.email.trim(),
+        loginForm.password,
+      );
+      completeAuth({
+        id: firebaseUser.localId,
+        uid: firebaseUser.localId,
+        idToken: firebaseUser.idToken,
+        nombre: firebaseUser.displayName || loginForm.email.split("@")[0],
+        email: firebaseUser.email || loginForm.email.trim(),
+        method: "web-login",
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      setFlowStatus("login-error");
+      setErrors({ form: error.message || "No se pudo iniciar sesión." });
+    }
+  };
+
+  /** Abre la app nativa cuando el usuario prefiere continuar el flujo ahi. */
+  const openLoginInApp = () => {
+    attemptOpenApp(invite, "express-login");
+  };
+
+  /** Solicita al backend enviar confirmacion de compra y QR al correo del comprador. */
+  const sendTicketEmail = async (purchase) => {
+    await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
+      to: purchase.buyer.email,
+      template: "event-ticket-confirmation",
+      purchase,
+    });
+  };
+
+
+  /** Une al usuario actual al plan o inicia solicitud/lista de espera segun reglas. */
+  const joinCurrentPlan = async () => {
+    if (!authUser || !invite.id || !isPlan) {
+      setView("login");
+      return;
+    }
+
+    setFlowStatus("joining-plan");
+    setPlanJoinMessage("");
+    try {
+      const result = await joinPlanTransaction(invite.id, authUser);
+      setPlanJoinMessage(
+        result?.message || "Listo, actualizamos tu participación en el plan.",
+      );
+      setFlowStatus(
+        result?.status === "requested" ? "plan-requested" : "plan-joined",
+      );
+    } catch (error) {
+      setPlanJoinMessage(
+        error.message || "No se pudo completar la unión al plan.",
+      );
+      setFlowStatus("plan-join-error");
+    }
+  };
+
+  /** Quita la participacion actual del usuario en el plan. */
+  const leaveCurrentPlan = async () => {
+    if (!authUser || !invite.id || !isPlan) {
+      setView("login");
+      return;
+    }
+
+    setFlowStatus("leaving-plan");
+    setPlanJoinMessage("");
+    try {
+      const result = await leavePlanTransaction(invite.id, authUser);
+      setPlanJoinMessage(result?.message || "Te saliste del plan.");
+      setFlowStatus("plan-left");
+    } catch (error) {
+      setPlanJoinMessage(
+        error.message || "No se pudo salir del plan. Intenta de nuevo.",
+      );
+      setFlowStatus("plan-join-error");
+    }
+  };
+
+  /** Gestiona solicitudes pendientes cuando el usuario autenticado es anfitrion. */
+  const resolveRequest = async (user, action) => {
+    if (!authUser || !invite.id || !isPlan) return;
+    setFlowStatus(action === "accept" ? "accepting-request" : "rejecting-request");
+    setPlanJoinMessage("");
+    try {
+      const result = await resolvePlanRequest(invite.id, authUser, user, action);
+      setPlanJoinMessage(result?.message || "Solicitud actualizada.");
+      setFlowStatus("plan-updated");
+    } catch (error) {
+      setPlanJoinMessage(error.message || "No se pudo actualizar la solicitud.");
+      setFlowStatus("plan-join-error");
+    }
+  };
+
+  /** Gestiona aceptacion o retiro de usuarios en lista de espera. */
+  const resolveWaitlist = async (user, action) => {
+    if (!authUser || !invite.id || !isPlan) return;
+    setFlowStatus(action === "accept" ? "accepting-waitlist" : "rejecting-waitlist");
+    setPlanJoinMessage("");
+    try {
+      const result = await resolveWaitlistUser(invite.id, authUser, user, action);
+      setPlanJoinMessage(result?.message || "Lista de espera actualizada.");
+      setFlowStatus("plan-updated");
+    } catch (error) {
+      setPlanJoinMessage(error.message || "No se pudo actualizar la lista de espera.");
+      setFlowStatus("plan-join-error");
+    }
+  };
+
+  /** Completa compra de evento como invitado o usuario autenticado. */
+  const completeGuestPurchase = async (buyer) => {
+    if (!selectedItem) {
+      setFlowStatus("purchase-error");
+      return;
+    }
+
+    setFlowStatus("purchasing");
+    const purchaseId =
+      `web-${invite.id}-${selectedItem.id}-${buyer.email}`.replace(
+        /[^a-zA-Z0-9_-]/g,
+        "-",
+      );
+    const purchase = {
+      id: purchaseId,
+      eventId: invite.id,
+      eventName: invite.title,
+      item: selectedItem,
+      quantity,
+      total: guestTotal,
+      buyer,
+      qrPayload: JSON.stringify({
+        eventId: invite.id,
+        itemId: selectedItem.id,
+        quantity,
+        email: buyer.email,
+      }),
+      successUrl: `${window.location.origin}${window.location.pathname}?eventId=${invite.id}&payment=success`,
+      cancelUrl: window.location.href,
+    };
+
+    try {
+      const result = await postJson(
+        EVENT_CHECKOUT_ENDPOINT || STRIPE_CHECKOUT_ENDPOINT,
+        purchase,
+      );
+      if (result?.url) {
+        window.location.assign(result.url);
+        return;
+      }
+
+      await sendTicketEmail(purchase);
+      sessionStorage.setItem(
+        `pulEventPurchase:${invite.id}`,
+        JSON.stringify(purchase),
+      );
+      setFlowStatus("event-paid");
+    } catch {
+      if (
+        !EVENT_CHECKOUT_ENDPOINT &&
+        !STRIPE_CHECKOUT_ENDPOINT &&
+        !EMAIL_CONFIRMATION_ENDPOINT
+      ) {
+        await new Promise((resolve) => window.setTimeout(resolve, 900));
+        sessionStorage.setItem(
+          `pulEventPurchase:${invite.id}`,
+          JSON.stringify(purchase),
+        );
+        setFlowStatus("event-paid");
+        return;
+      }
+      setFlowStatus("purchase-error");
+    }
+  };
+
+  /** Valida comprador invitado y lanza compra web. */
+  const buyAsGuest = async (event) => {
+    event.preventDefault();
+    const nextErrors = validateGuestForm(guestForm);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    await completeGuestPurchase({
+      nombre: guestForm.nombre.trim(),
+      email: guestForm.email.trim(),
+      telefono: guestForm.telefono.trim(),
+      method: "guest",
+    });
+  };
+
+  /** Usa la cuenta autenticada como comprador del evento. */
+  const buyAsUser = async () => {
+    if (!authUser) {
+      setView("register");
+      return;
+    }
+
+    await completeGuestPurchase({
+      ...authUser,
+      method: authUser.method || "authenticated-web",
+    });
+  };
+
+  /** Acepta la invitacion de reserva y crea el checkout de pago. */
+  const acceptAndPay = async () => {
+    if (!authUser || !isReserva) {
+      setView("register");
+      return;
+    }
+
+    setFlowStatus("paying");
+    try {
+      const result = await postJson(STRIPE_CHECKOUT_ENDPOINT, {
+        reservaId: invite.id,
+        amount: invite.amount,
+        user: authUser,
+        successUrl: `${window.location.origin}${window.location.pathname}?reservaId=${invite.id}&payment=success`,
+        cancelUrl: window.location.href,
+      });
+
+      if (result?.url) {
+        window.location.href = result.url;
+        return;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 900));
+      sessionStorage.setItem(
+        `pulReservaPayment:${invite.id}`,
+        JSON.stringify({ paidAt: new Date().toISOString(), user: authUser }),
+      );
+      setFlowStatus("paid");
+    } catch {
+      setFlowStatus("payment-error");
+    }
+  };
+
+  /** Registra rechazo de invitacion de reserva. */
+  const rejectInvitation = async () => {
+    setFlowStatus("rejecting");
+    try {
+      await postJson(RESERVA_RESPONSE_ENDPOINT, {
+        reservaId: invite.id,
+        action: "reject",
+        user: authUser,
+      });
+      sessionStorage.setItem(
+        `pulReservaRejected:${invite.id}`,
+        JSON.stringify({
+          rejectedAt: new Date().toISOString(),
+          user: authUser,
+        }),
+      );
+      setFlowStatus("rejected");
+    } catch {
+      setFlowStatus("reject-error");
+    }
+  };
+
+  /** Carga asistentes autenticados en paginas de 100 para planes grandes. */
+  const loadPlanAttendeesPage = async (cursorId = "") => {
+    if (!authUser || !invite.id || !isPlan) {
+      return { users: [], nextCursor: "", hasMore: false };
+    }
+
+    return fetchPlanMembersPage(invite.id, cursorId, 100);
+  };
+
+  const planSlots = [];
+
+  if (isPlan) {
+    return (
+      <PlanWebView
+        invite={invite}
+        inviteStatus={inviteStatus}
+        authUser={authUser}
+        onLogout={async () => {
+          await signOut(auth).catch(() => {});
+          localStorage.removeItem("pulExpressUser");
+          sessionStorage.removeItem("pulExpressUser");
+          setAuthUser(null);
+          setView("landing");
+          setPlanJoinMessage("");
+          setPlanRequests([]);
+          setPlanWaitlist([]);
+          setPlanActivities([]);
+          setPlanUsersById(new Map());
+          setFlowStatus("idle");
+          reloadWithFreshSession();
+        }}
+        flowStatus={flowStatus}
+        planJoinMessage={planJoinMessage}
+        planRequests={planRequests}
+        planWaitlist={planWaitlist}
+        planActivities={planActivities}
+        usersById={planUsersById}
+        view={view}
+        setView={setView}
+        errors={errors}
+        registerForm={registerForm}
+        loginForm={loginForm}
+        onRegisterFieldChange={onRegisterFieldChange}
+        onLoginFieldChange={onLoginFieldChange}
+        onRegisterSubmit={onRegisterSubmit}
+        onLoginSubmit={onLoginSubmit}
+        joinCurrentPlan={joinCurrentPlan}
+        leaveCurrentPlan={leaveCurrentPlan}
+        resolveRequest={resolveRequest}
+        resolveWaitlist={resolveWaitlist}
+        attemptOpenApp={attemptOpenApp}
+        loadAttendeesPage={loadPlanAttendeesPage}
+      />
+    );
+  }
+
+  return (
+    <PublicInviteView
+      isPlan={isPlan}
+      isEvent={isEvent}
+      isEventDetail={isEventDetail}
+      isReserva={isReserva}
+      usesReservaLayout={usesReservaLayout}
+      heroImage={heroImage}
+      invite={invite}
+      displayTags={displayTags}
+      attemptOpenApp={attemptOpenApp}
+      authUser={authUser}
+      rejectInvitation={rejectInvitation}
+      setView={setView}
+      openLoginInApp={openLoginInApp}
+      planSlots={planSlots}
+      spotsLeft={spotsLeft}
+      appPrompt={appPrompt}
+      inviteStatus={inviteStatus}
+      planJoinMessage={planJoinMessage}
+      view={view}
+      flowStatus={flowStatus}
+      purchasableItems={purchasableItems}
+      selectedItem={selectedItem}
+      setSelectedItemId={setSelectedItemId}
+      setQuantity={setQuantity}
+      quantity={quantity}
+      guestForm={guestForm}
+      onGuestFieldChange={onGuestFieldChange}
+      errors={errors}
+      guestTotal={guestTotal}
+      buyAsGuest={buyAsGuest}
+      buyAsUser={buyAsUser}
+      registerForm={registerForm}
+      onRegisterFieldChange={onRegisterFieldChange}
+      onRegisterSubmit={onRegisterSubmit}
+      loginForm={loginForm}
+      onLoginFieldChange={onLoginFieldChange}
+      onLoginSubmit={onLoginSubmit}
+      acceptAndPay={acceptAndPay}
+      joinCurrentPlan={joinCurrentPlan}
+    />
+  );
+}
+
+export default PublicInviteScreen;

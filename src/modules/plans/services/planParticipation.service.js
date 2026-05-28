@@ -1,0 +1,645 @@
+import {
+  collection,
+  doc,
+  documentId,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  startAfter,
+} from "firebase/firestore";
+import { db } from "../../../firebase";
+import { DEBUG_PREFIX } from "../../../shared/constants/appConfig";
+import { sendOneSignalNotification } from "../../../shared/services/notifications.service";
+import {
+  getUniqueIds,
+  getUserId,
+  normalizeUserSummary,
+} from "../../../shared/utils/users";
+
+/**
+ * Normaliza textos de configuracion del plan para comparar sin acentos ni caso.
+ */
+function normalizeKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Indica si el plan requiere aprobacion explicita del anfitrion.
+ */
+function isPrivatePlan(value) {
+  return normalizeKey(value) === "privado";
+}
+
+/**
+ * Indica si el plan esta limitado a amigos del anfitrion.
+ */
+function isFriendsPlan(value) {
+  return normalizeKey(value) === "amigos";
+}
+
+/**
+ * Obtiene el cupo del plan tolerando nombres nuevos y heredados.
+ */
+function getPlanCapacity(plan) {
+  return Number(plan?.personas ?? plan?.capacity ?? 0);
+}
+
+/**
+ * Obtiene un titulo legible del plan tolerando campos usados por app y web.
+ */
+function getPlanTitle(plan) {
+  return plan?.concepto || plan?.title || plan?.nombre || "tu plan";
+}
+
+/**
+ * Obtiene el id del anfitrion del plan tolerando formatos heredados.
+ */
+function getPlanHostId(plan) {
+  return plan?.anfitrion?.id || plan?.hostId || plan?.anfitrionId || "";
+}
+
+/**
+ * Lee contadores actuales y cae al arreglo legacy cuando aun existe.
+ */
+function getPlanCount(data, type) {
+  const countField = `${type}Count`;
+  if (typeof data?.[countField] === "number") return data[countField];
+  const legacy = Array.isArray(data?.[type]) ? data[type] : [];
+  return new Set(legacy.filter(Boolean)).size;
+}
+
+/**
+ * Construye referencias a subcolecciones de participantes del plan.
+ */
+function planParticipantRef(planId, type, userId) {
+  return doc(db, "planes", planId, type, userId);
+}
+
+/**
+ * Convierte el usuario autenticado web al resumen persistido en storage y Firestore.
+ */
+export function buildWebUserSummary(user) {
+  const id = getUserId(user);
+  return {
+    id,
+    uid: user?.uid || id,
+    nombre:
+      user?.nombre ||
+      user?.displayName ||
+      user?.email?.split?.("@")?.[0] ||
+      "Pul",
+    email: user?.email || "",
+    imagen: user?.imagen || user?.photoURL || "",
+    method: user?.method || "web-login",
+  };
+}
+
+/**
+ * Carga perfiles de usuario por id para enriquecer asistentes y solicitudes.
+ */
+export async function fetchUsersByIds(ids = []) {
+  const uniqueIds = getUniqueIds(ids);
+  if (!uniqueIds.length) return new Map();
+
+  const entries = await Promise.all(
+    uniqueIds.map(async (userId) => {
+      try {
+        const snap = await getDoc(doc(db, "usuarios", userId));
+        if (!snap.exists()) return [userId, normalizeUserSummary(userId)];
+        return [userId, normalizeUserSummary({ id: snap.id, ...snap.data() })];
+      } catch (error) {
+        console.warn(`${DEBUG_PREFIX} No se pudo cargar usuario`, {
+          userId,
+          error,
+        });
+        return [userId, normalizeUserSummary(userId)];
+      }
+    }),
+  );
+
+  return new Map(entries);
+}
+
+/**
+ * Carga integrantes del plan por paginas para no saturar planes con muchas personas.
+ */
+export async function fetchPlanMembersPage(planId, cursorId = "", pageSize = 100) {
+  if (!planId) {
+    return { users: [], nextCursor: "", hasMore: false };
+  }
+
+  const membersRef = collection(db, "planes", planId, "integrantes");
+  const pageQuery = cursorId
+    ? query(
+        membersRef,
+        orderBy(documentId()),
+        startAfter(cursorId),
+        limit(pageSize),
+      )
+    : query(membersRef, orderBy(documentId()), limit(pageSize));
+  const snap = await getDocs(pageQuery);
+  const memberIds = snap.docs.map((item) => item.data()?.userId || item.id);
+  const usersById = await fetchUsersByIds(memberIds);
+
+  return {
+    users: memberIds.map((id) => usersById.get(id) || normalizeUserSummary(id)),
+    nextCursor: snap.docs.at(-1)?.id || cursorId || "",
+    hasMore: snap.docs.length === pageSize,
+  };
+}
+
+/**
+ * Registra actividad visible del plan despues de cambios de participacion.
+ */
+async function recordPlanActivity(planId, type, user, message) {
+  const activityRef = doc(collection(db, "planes", planId, "actividades"));
+  await setDoc(activityRef, {
+    id: activityRef.id,
+    type,
+    userId: getUserId(user) || null,
+    userName: user?.nombre || user?.email || "Alguien",
+    message,
+    created_at: serverTimestamp(),
+  });
+}
+
+/**
+ * Construye payload de navegacion para abrir el detalle del plan en la app.
+ */
+function buildPlanNotificationData(planId) {
+  return { view: "DetailsPlan", id: planId };
+}
+
+/**
+ * Notifica al anfitrion cuando un usuario cambia su participacion.
+ */
+async function notifyHostPlanParticipation(plan, user, status) {
+  const hostId = getPlanHostId(plan);
+  const userId = getUserId(user);
+  if (!hostId || hostId === userId) return;
+
+  const planTitle = getPlanTitle(plan);
+  const userName = user?.nombre || user?.email || "Alguien";
+  const notifications = {
+    joined: {
+      title: `Se unieron a tu plan: ${planTitle}`,
+      message: `${userName} se unió a tu plan: ${planTitle}`,
+    },
+    requested: {
+      title: `Solicitud de unirse a tu plan: ${planTitle}`,
+      message: `${userName} envió solicitud para unirse a tu plan: ${planTitle}`,
+    },
+    waitlisted: {
+      title: `Lista de espera: ${planTitle}`,
+      message: `${userName} se agregó a la lista de espera.`,
+    },
+    left: {
+      title: `Se salieron de tu plan: ${planTitle}`,
+      message: `${userName} se salió de tu plan: ${planTitle}`,
+    },
+    "request-cancelled": {
+      title: `Solicitud cancelada: ${planTitle}`,
+      message: `${userName} canceló su solicitud para unirse a tu plan.`,
+    },
+    "waitlist-cancelled": {
+      title: `Lista de espera cancelada: ${planTitle}`,
+      message: `${userName} salió de la lista de espera.`,
+    },
+  };
+  const notification = notifications[status];
+  if (!notification) return;
+
+  await sendOneSignalNotification(
+    [hostId],
+    notification.title,
+    notification.message,
+    buildPlanNotificationData(plan.id),
+  );
+}
+
+/**
+ * Notifica al usuario cuando el anfitrion responde su solicitud o lista.
+ */
+async function notifyUserPlanResolution(plan, user, status) {
+  const userId = getUserId(user);
+  if (!userId) return;
+
+  const planTitle = getPlanTitle(plan);
+  const notifications = {
+    requestAccepted: {
+      title: `Te aceptaron en el plan: ${planTitle}`,
+      message: "El anfitrión aceptó tu solicitud para unirte.",
+    },
+    requestRejected: {
+      title: `Solicitud rechazada: ${planTitle}`,
+      message: "El anfitrión no aceptó tu solicitud para este plan.",
+    },
+    waitlistAccepted: {
+      title: `Te aceptaron en el plan: ${planTitle}`,
+      message: "El anfitrión te aceptó desde la lista de espera.",
+    },
+    waitlistRejected: {
+      title: `Lista de espera: ${planTitle}`,
+      message: "El anfitrión no pudo darte un lugar en este plan.",
+    },
+  };
+  const notification = notifications[status];
+  if (!notification) return;
+
+  await sendOneSignalNotification(
+    [userId],
+    notification.title,
+    notification.message,
+    buildPlanNotificationData(plan.id),
+  );
+}
+
+/**
+ * Une al usuario al plan, manda solicitud o lo agrega a lista de espera segun reglas.
+ */
+export async function joinPlanTransaction(planId, user) {
+  const userId = getUserId(user);
+  if (!planId || !userId) throw new Error("No hay usuario o plan válido.");
+
+  const planRef = doc(db, "planes", planId);
+  const memberRef = planParticipantRef(planId, "integrantes", userId);
+  const requestRef = planParticipantRef(planId, "solicitudes", userId);
+  const waitlistRef = doc(db, "planes", planId, "listaEspera", userId);
+
+  const result = await runTransaction(db, async (transaction) => {
+    const planSnap = await transaction.get(planRef);
+    if (!planSnap.exists()) throw new Error("Este plan ya no existe.");
+
+    const plan = { id: planSnap.id, ...planSnap.data() };
+    const hostId = getPlanHostId(plan);
+    if (hostId === userId) {
+      return { status: "host", message: "Tú eres el anfitrión de este plan.", plan };
+    }
+
+    const [memberSnap, requestSnap, waitlistSnap] = await Promise.all([
+      transaction.get(memberRef),
+      transaction.get(requestRef),
+      transaction.get(waitlistRef),
+    ]);
+
+    if (memberSnap.exists()) {
+      return { status: "joined", message: "Ya formas parte de este plan." };
+    }
+
+    const visibility = plan.visibilidad;
+
+    if (isPrivatePlan(visibility)) {
+      if (!requestSnap.exists()) {
+        const currentRequests = getPlanCount(plan, "solicitudes");
+        transaction.set(
+          requestRef,
+          {
+            id: userId,
+            userId,
+            planId,
+            created_at: serverTimestamp(),
+          },
+          { merge: true },
+        );
+        if (waitlistSnap.exists()) transaction.delete(waitlistRef);
+        transaction.update(planRef, {
+          integrantes: [],
+          solicitudes: [],
+          solicitudesCount: currentRequests + 1,
+          participantesStorage: "subcoleccion",
+        });
+      }
+      return {
+        status: "requested",
+        message: "Solicitud enviada. Espera la aprobación del anfitrión.",
+        plan,
+      };
+    }
+
+    if (isFriendsPlan(visibility) && hostId) {
+      const friendRef = doc(db, "usuarios", hostId, "amigos", userId);
+      const hostRef = doc(db, "usuarios", hostId);
+      const [friendSnap, hostSnap] = await Promise.all([
+        transaction.get(friendRef),
+        transaction.get(hostRef),
+      ]);
+      const isFriend =
+        friendSnap.exists() ||
+        Boolean(hostSnap.exists() && (hostSnap.data()?.amigos || []).includes(userId));
+      if (!isFriend) {
+        return {
+          status: "blocked",
+          message: "No puedes unirte. Este plan es solo para amigos del anfitrión.",
+          plan,
+        };
+      }
+    }
+
+    const currentMembers = getPlanCount(plan, "integrantes");
+    const capacity = getPlanCapacity(plan);
+
+    if (capacity > 0 && currentMembers >= capacity) {
+      if (!waitlistSnap.exists()) {
+        transaction.set(
+          waitlistRef,
+          {
+            id: userId,
+            userId,
+            planId,
+            created_at: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+      return {
+        status: "waitlisted",
+        message: "El cupo está lleno. Te agregamos a la lista de espera.",
+        plan,
+      };
+    }
+
+    transaction.set(
+      memberRef,
+      {
+        id: userId,
+        userId,
+        planId,
+        created_at: serverTimestamp(),
+      },
+      { merge: true },
+    );
+    if (requestSnap.exists()) transaction.delete(requestRef);
+    if (waitlistSnap.exists()) transaction.delete(waitlistRef);
+    transaction.update(planRef, {
+      integrantes: [],
+      solicitudes: [],
+      integrantesCount: currentMembers + 1,
+      solicitudesCount: Math.max(0, getPlanCount(plan, "solicitudes") - (requestSnap.exists() ? 1 : 0)),
+      participantesStorage: "subcoleccion",
+    });
+
+    return { status: "joined", message: "Te uniste a este plan.", plan };
+  });
+
+  if (["joined", "requested", "waitlisted"].includes(result.status)) {
+    await recordPlanActivity(
+      planId,
+      result.status === "joined"
+        ? "join"
+        : result.status === "requested"
+          ? "request"
+          : "waitlist",
+      user,
+      result.status === "joined"
+        ? `${user.nombre || user.email} se unió al plan`
+        : result.status === "requested"
+          ? `${user.nombre || user.email} envió solicitud para unirse`
+          : `${user.nombre || user.email} se unió a la lista de espera`,
+    );
+    await notifyHostPlanParticipation(result.plan, user, result.status);
+  }
+
+  return result;
+}
+
+/**
+ * Quita al usuario de integrantes, solicitudes o lista de espera en una transaccion.
+ */
+export async function leavePlanTransaction(planId, user) {
+  const userId = getUserId(user);
+  if (!planId || !userId) throw new Error("No hay usuario o plan válido.");
+
+  const planRef = doc(db, "planes", planId);
+  const memberRef = planParticipantRef(planId, "integrantes", userId);
+  const requestRef = planParticipantRef(planId, "solicitudes", userId);
+  const waitlistRef = doc(db, "planes", planId, "listaEspera", userId);
+
+  const result = await runTransaction(db, async (transaction) => {
+    const planSnap = await transaction.get(planRef);
+    if (!planSnap.exists()) throw new Error("Este plan ya no existe.");
+    const plan = { id: planSnap.id, ...planSnap.data() };
+    if (getPlanHostId(plan) === userId) {
+      return { status: "host", message: "No puedes salir, eres el anfitrión.", plan };
+    }
+
+    const [memberSnap, requestSnap, waitlistSnap] = await Promise.all([
+      transaction.get(memberRef),
+      transaction.get(requestRef),
+      transaction.get(waitlistRef),
+    ]);
+
+    const updates = {
+      integrantes: [],
+      solicitudes: [],
+      participantesStorage: "subcoleccion",
+      integrantesCount: Math.max(
+        0,
+        getPlanCount(plan, "integrantes") - (memberSnap.exists() ? 1 : 0),
+      ),
+      solicitudesCount: Math.max(
+        0,
+        getPlanCount(plan, "solicitudes") - (requestSnap.exists() ? 1 : 0),
+      ),
+    };
+
+    if (memberSnap.exists()) transaction.delete(memberRef);
+    if (requestSnap.exists()) transaction.delete(requestRef);
+    if (waitlistSnap.exists()) transaction.delete(waitlistRef);
+    transaction.update(planRef, updates);
+
+    if (memberSnap.exists()) return { status: "left", message: "Te saliste del plan.", plan };
+    if (requestSnap.exists()) return { status: "request-cancelled", message: "Tu solicitud fue cancelada.", plan };
+    if (waitlistSnap.exists()) return { status: "waitlist-cancelled", message: "Saliste de la lista de espera.", plan };
+    return { status: "none", message: "No tenías una participación activa.", plan };
+  });
+
+  if (["left", "request-cancelled", "waitlist-cancelled"].includes(result.status)) {
+    await recordPlanActivity(
+      planId,
+      result.status === "left" ? "leave" : "cancel_request",
+      user,
+      result.status === "left"
+        ? `${user.nombre || user.email} salió del plan`
+        : `${user.nombre || user.email} canceló su participación`,
+    );
+    await notifyHostPlanParticipation(result.plan, user, result.status);
+  }
+
+  return result;
+}
+
+/**
+ * Permite al anfitrion aceptar o rechazar solicitudes pendientes.
+ */
+export async function resolvePlanRequest(planId, hostUser, targetUser, action) {
+  const hostId = getUserId(hostUser);
+  const targetUserId = getUserId(targetUser);
+  if (!planId || !hostId || !targetUserId) throw new Error("Datos incompletos.");
+
+  const planRef = doc(db, "planes", planId);
+  const memberRef = planParticipantRef(planId, "integrantes", targetUserId);
+  const requestRef = planParticipantRef(planId, "solicitudes", targetUserId);
+
+  const result = await runTransaction(db, async (transaction) => {
+    const planSnap = await transaction.get(planRef);
+    if (!planSnap.exists()) throw new Error("Este plan ya no existe.");
+    const plan = { id: planSnap.id, ...planSnap.data() };
+    if (getPlanHostId(plan) !== hostId) {
+      throw new Error("Solo el anfitrión puede gestionar solicitudes.");
+    }
+
+    const [requestSnap, memberSnap] = await Promise.all([
+      transaction.get(requestRef),
+      transaction.get(memberRef),
+    ]);
+    if (!requestSnap.exists()) {
+      return { status: "missing", message: "La solicitud ya no está pendiente.", plan };
+    }
+
+    const currentRequests = getPlanCount(plan, "solicitudes");
+    const currentMembers = getPlanCount(plan, "integrantes");
+
+    transaction.delete(requestRef);
+
+    if (action === "accept") {
+      if (!memberSnap.exists()) {
+        transaction.set(
+          memberRef,
+          {
+            id: targetUserId,
+            userId: targetUserId,
+            planId,
+            created_at: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+    }
+
+    transaction.update(planRef, {
+      integrantes: [],
+      solicitudes: [],
+      integrantesCount:
+        action === "accept" && !memberSnap.exists()
+          ? currentMembers + 1
+          : currentMembers,
+      solicitudesCount: Math.max(0, currentRequests - 1),
+      participantesStorage: "subcoleccion",
+    });
+
+    return {
+      status: action === "accept" ? "accepted" : "rejected",
+      message:
+        action === "accept"
+          ? "Solicitud aceptada."
+          : "Solicitud rechazada.",
+      plan,
+    };
+  });
+
+  if (["accepted", "rejected"].includes(result.status)) {
+    await recordPlanActivity(
+      planId,
+      result.status === "accepted" ? "accept_request" : "reject_request",
+      targetUser,
+      result.status === "accepted"
+        ? `${targetUser.nombre || targetUser.email} fue aceptado al plan`
+        : `${targetUser.nombre || targetUser.email} fue rechazado del plan`,
+    );
+    await notifyUserPlanResolution(
+      result.plan,
+      targetUser,
+      result.status === "accepted" ? "requestAccepted" : "requestRejected",
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Permite al anfitrion aceptar o quitar usuarios de la lista de espera.
+ */
+export async function resolveWaitlistUser(planId, hostUser, targetUser, action) {
+  const hostId = getUserId(hostUser);
+  const targetUserId = getUserId(targetUser);
+  if (!planId || !hostId || !targetUserId) throw new Error("Datos incompletos.");
+
+  const planRef = doc(db, "planes", planId);
+  const memberRef = planParticipantRef(planId, "integrantes", targetUserId);
+  const waitlistRef = doc(db, "planes", planId, "listaEspera", targetUserId);
+
+  const result = await runTransaction(db, async (transaction) => {
+    const planSnap = await transaction.get(planRef);
+    if (!planSnap.exists()) throw new Error("Este plan ya no existe.");
+    const plan = { id: planSnap.id, ...planSnap.data() };
+    if (getPlanHostId(plan) !== hostId) {
+      throw new Error("Solo el anfitrión puede gestionar lista de espera.");
+    }
+
+    const [waitlistSnap, memberSnap] = await Promise.all([
+      transaction.get(waitlistRef),
+      transaction.get(memberRef),
+    ]);
+    if (!waitlistSnap.exists()) {
+      return { status: "missing", message: "El usuario ya no está en lista de espera." };
+    }
+
+    const currentMembers = getPlanCount(plan, "integrantes");
+    transaction.delete(waitlistRef);
+
+    if (action === "accept" && !memberSnap.exists()) {
+      transaction.set(
+        memberRef,
+        {
+          id: targetUserId,
+          userId: targetUserId,
+          planId,
+          created_at: serverTimestamp(),
+        },
+        { merge: true },
+      );
+      transaction.update(planRef, {
+        integrantes: [],
+        solicitudes: [],
+        integrantesCount: currentMembers + 1,
+        participantesStorage: "subcoleccion",
+      });
+    }
+
+    return {
+      status: action === "accept" ? "accepted" : "rejected",
+      message:
+        action === "accept"
+          ? "Usuario aceptado desde lista de espera."
+          : "Usuario eliminado de lista de espera.",
+      plan,
+    };
+  });
+
+  if (["accepted", "rejected"].includes(result.status)) {
+    await recordPlanActivity(
+      planId,
+      result.status === "accepted" ? "accept_waitlist" : "reject_request",
+      targetUser,
+      result.status === "accepted"
+        ? `${targetUser.nombre || targetUser.email} fue aceptado desde lista de espera`
+        : `${targetUser.nombre || targetUser.email} fue rechazado de lista de espera`,
+    );
+    await notifyUserPlanResolution(
+      result.plan,
+      targetUser,
+      result.status === "accepted" ? "waitlistAccepted" : "waitlistRejected",
+    );
+  }
+
+  return result;
+}
