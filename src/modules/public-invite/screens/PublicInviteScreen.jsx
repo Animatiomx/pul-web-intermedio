@@ -1494,8 +1494,6 @@ function PublicInviteScreen() {
           id_ref: invite.id,
           vista: "detalle_reserva_pago_pendiente",
           user_id: authUser.id,
-          payment_request_id: authUser.id,
-          payment_lock_id: paymentLockId,
         },
       });      
 
