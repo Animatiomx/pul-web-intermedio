@@ -885,6 +885,10 @@
   background: var(--color-magenta);
 }
 
+.reservation-member-badge.pending {
+  background: #ef8a17;
+}
+
 .mobile-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

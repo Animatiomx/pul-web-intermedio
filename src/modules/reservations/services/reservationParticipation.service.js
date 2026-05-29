@@ -1,8 +1,4 @@
-import {
-  doc,
-  runTransaction,
-  serverTimestamp,
-} from "firebase/firestore";
+import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../../../firebase";
 import { getUserId } from "../../../shared/utils/users";
 
@@ -35,33 +31,57 @@ export class ReservationConcurrencyError extends Error {
 
 export function getReservationMemberIds(reservation = {}) {
   return [
-    ...new Set([
-      ...(Array.isArray(reservation.integrantesIds)
-        ? reservation.integrantesIds
-        : []),
-      ...(Array.isArray(reservation.integrantes)
-        ? reservation.integrantes.map((member) => member?.id)
-        : []),
-    ].filter(Boolean)),
+    ...new Set(
+      [
+        ...(Array.isArray(reservation.integrantesIds)
+          ? reservation.integrantesIds
+          : []),
+        ...(Array.isArray(reservation.integrantes)
+          ? reservation.integrantes.map((member) => member?.id)
+          : []),
+      ].filter(Boolean),
+    ),
   ];
 }
 
 export function getPendingPaymentRequest(reservation = {}, userId = "") {
-  if (!reservation || reservation.status !== "pending_payment" || !userId) {
+  if (!reservation || !userId) {
     return null;
   }
 
-  return (
-    (reservation.paymentRequests || []).find(
-      (request) => request.id === userId && request.status === "pending",
-    ) || null
+  const request = (reservation.paymentRequests || []).find(
+    (item) => item.id === userId && item.status === "pending",
   );
+  if (request) return request;
+
+  const dividersCurso = Array.isArray(reservation.dividersCurso)
+    ? reservation.dividersCurso
+    : [];
+  if (!dividersCurso.includes(userId)) return null;
+
+  const cuentaCurso = reservation.cuentaCurso || {};
+  const monto = Number(
+    cuentaCurso.cu || cuentaCurso.total || cuentaCurso.subtotal || 0,
+  );
+  if (monto <= 0) return null;
+
+  const member = (reservation.integrantes || []).find(
+    (item) => item?.id === userId,
+  );
+
+  return {
+    id: userId,
+    nombre: member?.nombre || "",
+    imagen: member?.imagen || "",
+    monto,
+    status: "pending",
+  };
 }
 
 export function shouldHideReservationForUser(reservation = {}, userId = "") {
   const status = reservation.status || "";
-  if (status === "cancelada") return true;
-  if (status !== "finalizada") return false;
+  if (!["cancelada", "curso", "finalizada"].includes(status)) return false;
+  if (!userId) return false;
   return !getReservationMemberIds(reservation).includes(userId);
 }
 
@@ -86,7 +106,7 @@ export async function joinReservationTransaction(reservationId, user) {
     }
 
     const reservation = { id: snap.id, ...snap.data() };
-    if (["cancelada", "finalizada"].includes(reservation.status)) {
+    if (["cancelada", "curso", "finalizada"].includes(reservation.status)) {
       throw new ReservationConcurrencyError(
         "closed",
         "La reservación ya no acepta integrantes.",
@@ -133,9 +153,7 @@ export async function joinReservationTransaction(reservationId, user) {
     transaction.update(reservationRef, {
       integrantes: nextIntegrantes,
       integrantesIds: nextIntegrantesIds,
-      reviewers: [
-        ...new Set([...(reservation.reviewers || []), userId]),
-      ],
+      reviewers: [...new Set([...(reservation.reviewers || []), userId])],
       updatedAt: serverTimestamp(),
     });
 
@@ -167,12 +185,23 @@ export async function beginReservationPayment(reservationId, userId) {
 
     const reservation = snap.data();
     const request = getPendingPaymentRequest(reservation, userId);
+    const isCurso = reservation?.status === "curso";
+
+    const pendingRequest = isCurso
+      ? (reservation?.paymentRequests || []).find(
+          (item) => item?.id === userId && item?.status === "pending",
+        )
+      : request;
+
+    const payers = isCurso ? [] : reservation?.payers || [];
+
     const alreadyPaid = Boolean(
-      request?.status === "paid" ||
-        (reservation.payers || []).some((payer) => payer.id === userId),
+      !isCurso &&
+      (request?.status === "paid" ||
+        payers.some((payer) => payer.id === userId)),
     );
 
-    if (!request || alreadyPaid) {
+    if (!pendingRequest || alreadyPaid) {
       throw new ReservationConcurrencyError(
         "not-pending",
         "Este pago ya no está pendiente.",
@@ -191,6 +220,7 @@ export async function beginReservationPayment(reservationId, userId) {
     paymentLocks[userId] = {
       lockId,
       lockedAt: new Date(now),
+      startedAt: new Date(now),
       expiresAt,
       monto: request.monto,
     };
@@ -264,6 +294,9 @@ export async function completeReservationPayment({
       );
     }
 
+    const nextDividersCurso = (reservation.dividersCurso || []).filter(
+      (id) => id !== userId,
+    );
     const paymentRequests = (reservation.paymentRequests || []).map(
       (request) =>
         request.id === userId
@@ -274,9 +307,9 @@ export async function completeReservationPayment({
             }
           : request,
     );
-    const requestExists = paymentRequests.some(
-      (request) => request.id === userId,
-    );
+    const requestExists =
+      paymentRequests.some((request) => request.id === userId) ||
+      (reservation.dividersCurso || []).includes(userId);
     if (!requestExists) {
       throw new ReservationConcurrencyError(
         "not-pending",
@@ -284,10 +317,19 @@ export async function completeReservationPayment({
       );
     }
 
+    const payersCurso = uniqueById([
+      ...(reservation.payersCurso || []).filter((item) => item.id !== userId),
+      payer,
+    ]);
     const payers = uniqueById([
       ...(reservation.payers || []).filter((item) => item.id !== userId),
       payer,
     ]);
+    const integrantes = (reservation.integrantes || []).map((integrante) =>
+      integrante.id === userId
+        ? { ...integrante, pagado: "Pagado" }
+        : integrante,
+    );
     const integrantesDivers = (reservation.integrantesDivers || []).map(
       (integrante) =>
         integrante.id === userId
@@ -298,8 +340,9 @@ export async function completeReservationPayment({
       reservation.pendingPaymentUserIds || []
     ).filter((id) => id !== userId);
     const allPaid =
-      paymentRequests.length > 0 &&
-      paymentRequests.every((request) => request.status === "paid");
+      nextDividersCurso.length === 0 &&
+      (!paymentRequests.length ||
+        paymentRequests.every((request) => request.status !== "pending"));
 
     delete paymentLocks[userId];
 
@@ -308,6 +351,9 @@ export async function completeReservationPayment({
       pendingPaymentUserIds,
       paymentRequestStatus: allPaid ? "complete" : "requested",
       payers,
+      payersCurso,
+      dividersCurso: nextDividersCurso,
+      integrantes,
       integrantesDivers,
       dividers: (reservation.dividers || []).filter((id) => id !== userId),
       idPagos: paymentIntentId

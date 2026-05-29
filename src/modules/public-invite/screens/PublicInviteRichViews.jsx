@@ -1,5 +1,10 @@
 import { useMemo, useState } from "react";
-import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  useElements,
+  useStripe,
+} from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import defaultAvatar from "../../../assets/default.png";
 import logo from "../../../assets/logopul.png";
@@ -109,9 +114,7 @@ function StatusNote({ message, flowStatus }) {
   const isError = String(flowStatus || "").includes("error");
 
   return (
-    <p
-      className={`status-note ${isError ? "error-note" : "success-note"}`}
-    >
+    <p className={`status-note ${isError ? "error-note" : "success-note"}`}>
       {message}
     </p>
   );
@@ -235,7 +238,9 @@ function ReservationPaymentModal({
         </div>
         <div className="reservation-payment-user">
           <span>Cuenta Stripe</span>
-          <strong>{authUser?.nombre || authUser?.email || "Usuario Pul"}</strong>
+          <strong>
+            {authUser?.nombre || authUser?.email || "Usuario Pul"}
+          </strong>
           {authUser?.email && <p>{authUser.email}</p>}
         </div>
         <Elements
@@ -514,13 +519,17 @@ function getReservationSummaryAccount(reservation) {
 function getMemberRole(member, reservation) {
   const memberId = member?.id || "";
   const payerIds = new Set(
-    (reservation.payers || reservation.payersCurso || [])
+    [...(reservation.payers || []), ...(reservation.payersCurso || [])]
       .map((payer) => payer?.id)
       .filter(Boolean),
   );
 
   if (member?.divider || member?.pagado === true || payerIds.has(memberId)) {
     return "payer";
+  }
+
+  if ((reservation.dividersCurso || []).includes(memberId)) {
+    return "pending";
   }
 
   return "guest";
@@ -582,7 +591,7 @@ export function ReservationPublicView({
   const mapUrl = `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
   const canJoin =
     Boolean(authUser && !isMember) &&
-    !["cancelada", "finalizada"].includes(reservation.status || "") &&
+    !["cancelada", "curso", "finalizada"].includes(reservation.status || "") &&
     (availableSpots === null || availableSpots > 0);
   const hasMesa =
     Boolean(mesa && Object.keys(mesa).length > 0) &&
@@ -813,7 +822,11 @@ export function ReservationPublicView({
                 <img src={member.imagen || defaultAvatar} alt="" />
                 <span>{member.nombre}</span>
                 <em className={`reservation-member-badge ${member.role}`}>
-                  {member.role === "payer" ? "Pagador" : "Invitado"}
+                  {member.role === "payer"
+                    ? "Pagador"
+                    : member.role === "pending"
+                      ? "Pendiente"
+                      : "Invitado"}
                 </em>
               </div>
             ))}
@@ -862,7 +875,7 @@ export function ReservationPublicView({
                   rel="noreferrer"
                 >
                   <ReservationIcon name="map" />
-                 Ver en mapa
+                  Ver en mapa
                 </a>
               ) : null
             }
