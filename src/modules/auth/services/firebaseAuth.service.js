@@ -4,6 +4,39 @@ import {
   signInWithEmailAndPassword,
 } from "firebase/auth";
 import { auth, authPersistenceReady } from "../../../firebase";
+
+export function getFirebaseAuthErrorMessage(error) {
+  const code = error?.code || error?.message || "";
+  const messages = {
+    "auth/invalid-credential":
+      "El correo o la contraseña no son correctos. Revisa tus datos e intenta de nuevo.",
+    "auth/wrong-password":
+      "La contraseña no es correcta. Intenta de nuevo o recupera tu contraseña.",
+    "auth/user-not-found":
+      "No encontramos una cuenta con ese correo. Revisa el correo o crea una cuenta.",
+    "auth/invalid-email": "Escribe un correo válido.",
+    "auth/missing-password": "Ingresa tu contraseña.",
+    "auth/too-many-requests":
+      "Hiciste varios intentos seguidos. Espera unos minutos antes de intentar otra vez.",
+    "auth/email-already-in-use":
+      "Este correo ya está registrado. Inicia sesión para continuar.",
+    "auth/weak-password":
+      "La contraseña es muy débil. Usa al menos 6 caracteres.",
+    "auth/network-request-failed":
+      "No pudimos conectar con Firebase. Revisa tu conexión e intenta de nuevo.",
+    "auth/user-disabled":
+      "Esta cuenta está deshabilitada. Contacta a soporte para revisarla.",
+  };
+
+  const matchedCode = Object.keys(messages).find((item) =>
+    String(code).includes(item),
+  );
+
+  return (
+    messages[matchedCode] ||
+    "No pudimos completar la autenticación. Intenta de nuevo."
+  );
+}
 /**
  * Inicia sesion en Firebase respetando la persistencia local configurada.
  */

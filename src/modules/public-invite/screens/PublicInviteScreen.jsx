@@ -42,6 +42,7 @@ import {
   validateRegisterForm,
 } from "../../../shared/utils/validators";
 import {
+  getFirebaseAuthErrorMessage,
   sendFirebasePasswordReset,
   signInWithFirebasePassword,
   signUpWithFirebasePassword,
@@ -1174,12 +1175,7 @@ function PublicInviteScreen() {
     } catch (error) {
       setFlowStatus("register-error");
 
-      const message =
-        error.message === "EMAIL_EXISTS"
-          ? "Este email ya está registrado. Inicia sesión para continuar."
-          : error.message || "No se pudo crear la cuenta.";
-
-      setErrors({ form: message });
+      setErrors({ form: getFirebaseAuthErrorMessage(error) });
     }
   };
 
@@ -1212,7 +1208,7 @@ function PublicInviteScreen() {
       });
     } catch (error) {
       setFlowStatus("login-error");
-      setErrors({ form: error.message || "No se pudo iniciar sesión." });
+      setErrors({ form: getFirebaseAuthErrorMessage(error) });
     }
   };
 
@@ -1235,9 +1231,7 @@ function PublicInviteScreen() {
     } catch (error) {
       setFlowStatus("password-reset-error");
       setErrors({
-        form:
-          error.message ||
-          "No pudimos enviar el correo de recuperación. Intenta de nuevo.",
+        form: getFirebaseAuthErrorMessage(error),
       });
     }
   };
