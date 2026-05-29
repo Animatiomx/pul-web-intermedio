@@ -1,5 +1,6 @@
 import {
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
 } from "firebase/auth";
 import { auth, authPersistenceReady } from "../../../firebase";
@@ -35,4 +36,12 @@ export async function signUpWithFirebasePassword(email, password) {
     email: credential.user.email,
     photoUrl: credential.user.photoURL,
   };
+}
+
+/**
+ * Envia un correo de recuperacion de contraseña con la configuracion actual.
+ */
+export async function sendFirebasePasswordReset(email) {
+  await authPersistenceReady;
+  await sendPasswordResetEmail(auth, email);
 }

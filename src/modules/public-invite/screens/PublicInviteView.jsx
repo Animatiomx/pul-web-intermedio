@@ -67,15 +67,19 @@ export default function PublicInviteView({
   onRegisterFieldChange,
   onRegisterSubmit,
   loginForm,
+  passwordResetForm,
   onLoginFieldChange,
+  onPasswordResetFieldChange,
   onLoginSubmit,
+  onPasswordResetSubmit,
   acceptAndPay,
   joinCurrentPlan,
 }) {
-  if (isReserva) {
+  if (isReserva || isEventDetail) {
     return (
       <ReservationPublicView
         invite={invite}
+        isEventDetail={isEventDetail}
         authUser={authUser}
         individualAccount={individualAccount}
         setView={setView}
@@ -95,10 +99,13 @@ export default function PublicInviteView({
         errors={errors}
         registerForm={registerForm}
         loginForm={loginForm}
+        passwordResetForm={passwordResetForm}
         onRegisterFieldChange={onRegisterFieldChange}
         onLoginFieldChange={onLoginFieldChange}
+        onPasswordResetFieldChange={onPasswordResetFieldChange}
         onRegisterSubmit={onRegisterSubmit}
         onLoginSubmit={onLoginSubmit}
+        onPasswordResetSubmit={onPasswordResetSubmit}
       />
     );
   }
@@ -900,6 +907,61 @@ export default function PublicInviteView({
                 onClick={openLoginInApp}
               >
                 Abrir en app
+              </button>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => setView("recover-password")}
+              >
+                Recuperar contraseña
+              </button>
+            </div>
+          </form>
+        ) : view === "recover-password" ? (
+          <form
+            className="express-form login-form"
+            onSubmit={onPasswordResetSubmit}
+            noValidate
+          >
+            <label>
+              <span>Email</span>
+              <input
+                name="email"
+                type="email"
+                autoComplete="email"
+                value={passwordResetForm.email}
+                onChange={onPasswordResetFieldChange}
+                aria-invalid={Boolean(errors.email)}
+              />
+              {errors.email && <small>{errors.email}</small>}
+            </label>
+            {errors.form && (
+              <p
+                className={`status-note ${
+                  flowStatus === "password-reset-sent"
+                    ? "success-note"
+                    : "error-note"
+                }`}
+              >
+                {errors.form}
+              </p>
+            )}
+            <div className="form-actions">
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={flowStatus === "recovering-password"}
+              >
+                {flowStatus === "recovering-password"
+                  ? "Enviando..."
+                  : "Enviar correo"}
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setView("login")}
+              >
+                Volver al inicio de sesión
               </button>
             </div>
           </form>

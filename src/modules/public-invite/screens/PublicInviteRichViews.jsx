@@ -288,10 +288,13 @@ function ReservationAuthPanel({
   errors,
   registerForm,
   loginForm,
+  passwordResetForm,
   onRegisterFieldChange,
   onLoginFieldChange,
+  onPasswordResetFieldChange,
   onRegisterSubmit,
   onLoginSubmit,
+  onPasswordResetSubmit,
   flowStatus,
 }) {
   if (view === "register") {
@@ -421,6 +424,70 @@ function ReservationAuthPanel({
         >
           Registro rápido
         </button>
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => setView("recover-password")}
+        >
+          Recuperar contraseña
+        </button>
+      </form>
+    );
+  }
+
+  if (view === "recover-password") {
+    const isSuccess = flowStatus === "password-reset-sent";
+
+    return (
+      <form
+        className="reservation-auth-card reservation-auth-form-card"
+        onSubmit={onPasswordResetSubmit}
+        noValidate
+      >
+        <div className="reservation-auth-head">
+          <span className="mobile-info-icon" aria-hidden="true">
+            <ReservationIcon name="user" />
+          </span>
+          <div>
+            <span>Recuperar contraseña</span>
+            <strong>Te enviaremos un correo</strong>
+          </div>
+        </div>
+        <label>
+          <span>Email</span>
+          <input
+            name="email"
+            type="email"
+            value={passwordResetForm.email}
+            onChange={onPasswordResetFieldChange}
+          />
+          {errors.email && <small>{errors.email}</small>}
+        </label>
+        {errors.form && (
+          <p
+            className={`status-note ${
+              isSuccess ? "success-note" : "error-note"
+            }`}
+          >
+            {errors.form}
+          </p>
+        )}
+        <button
+          className="primary-button"
+          disabled={flowStatus === "recovering-password"}
+          type="submit"
+        >
+          {flowStatus === "recovering-password"
+            ? "Enviando..."
+            : "Enviar correo"}
+        </button>
+        <button
+          className="ghost-button"
+          type="button"
+          onClick={() => setView("login")}
+        >
+          Volver al inicio de sesión
+        </button>
       </form>
     );
   }
@@ -537,6 +604,7 @@ function getMemberRole(member, reservation) {
 
 export function ReservationPublicView({
   invite,
+  isEventDetail = false,
   authUser,
   individualAccount,
   setView,
@@ -555,16 +623,28 @@ export function ReservationPublicView({
   errors,
   registerForm,
   loginForm,
+  passwordResetForm,
   onRegisterFieldChange,
   onLoginFieldChange,
+  onPasswordResetFieldChange,
   onRegisterSubmit,
   onLoginSubmit,
+  onPasswordResetSubmit,
 }) {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [mesaDetailOpen, setMesaDetailOpen] = useState(false);
   const [accountMode, setAccountMode] = useState("general");
   const reservation = invite.raw || {};
-  const venue = reservation.negocio || {};
+  const event = reservation.evento || reservation.eventPurchase?.event || {};
+  const venue = isEventDetail
+    ? {
+        nombre: event.nombre || invite.title,
+        direccion: event.ubicacion || invite.address,
+        imagen: event.fotoHome || event.fotos?.[0] || invite.image,
+      }
+    : reservation.negocio || {};
+  const detailLabel = isEventDetail ? "evento" : "reservación";
+  const detailLabelTitle = isEventDetail ? "evento" : "reservación";
   const account = getReservationSummaryAccount(reservation);
   const individualSummary =
     individualAccount?.cuenta || individualAccount || null;
@@ -589,9 +669,20 @@ export function ReservationPublicView({
   const pendingPaymentRequest = getPendingPaymentRequest(reservation, userId);
   const mapQuery = encodeURIComponent(venue.direccion || invite.address || "");
   const mapUrl = `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
+  const normalizedStatus = String(reservation.status || "").toLowerCase();
+  const closedStatuses = isEventDetail
+    ? ["cancelada", "cancelado", "curso"]
+    : ["cancelada", "cancelado", "curso", "finalizada", "finalizado"];
+  const limitedPublicView =
+    !authUser &&
+    (isEventDetail
+      ? ["confirmada", "confirmado", "finalizada", "finalizado"].includes(
+          normalizedStatus,
+        )
+      : ["finalizada", "cancelada", "curso"].includes(normalizedStatus));
   const canJoin =
     Boolean(authUser && !isMember) &&
-    !["cancelada", "curso", "finalizada"].includes(reservation.status || "") &&
+    !closedStatuses.includes(normalizedStatus) &&
     (availableSpots === null || availableSpots > 0);
   const hasMesa =
     Boolean(mesa && Object.keys(mesa).length > 0) &&
@@ -646,13 +737,13 @@ export function ReservationPublicView({
               <img src={venue.imagen || invite.image || defaultAvatar} alt="" />
             </div>
             <div className="reservation-venue-copy">
-              <p className="eyebrow">Detalle de reservación</p>
+              <p className="eyebrow">Detalle de {detailLabelTitle}</p>
               <h1>{venue.nombre || invite.title}</h1>
               <span>{venue.direccion || invite.address}</span>
             </div>
           </section>
 
-          {Number(reservation.credito || 0) > 0 && (
+          {!limitedPublicView && Number(reservation.credito || 0) > 0 && (
             <section className="mobile-soft-card accent">
               <strong>
                 Crédito a favor {formatCurrency(reservation.credito)}
@@ -699,7 +790,10 @@ export function ReservationPublicView({
           />
         )}
 
-        {!authUser && (view === "login" || view === "register") && (
+        {!authUser &&
+          (view === "login" ||
+            view === "register" ||
+            view === "recover-password") && (
           <div className="reservation-auth-mobile-slot">
             <ReservationAuthPanel
               view={view}
@@ -707,22 +801,25 @@ export function ReservationPublicView({
               errors={errors}
               registerForm={registerForm}
               loginForm={loginForm}
+              passwordResetForm={passwordResetForm}
               onRegisterFieldChange={onRegisterFieldChange}
               onLoginFieldChange={onLoginFieldChange}
+              onPasswordResetFieldChange={onPasswordResetFieldChange}
               onRegisterSubmit={onRegisterSubmit}
               onLoginSubmit={onLoginSubmit}
+              onPasswordResetSubmit={onPasswordResetSubmit}
               flowStatus={flowStatus}
             />
           </div>
         )}
 
-        {pendingPaymentRequest && (
+        {!limitedPublicView && pendingPaymentRequest && (
           <section className="mobile-payment-card">
             <div className="mobile-payment-head">
               <span aria-hidden="true">$</span>
               <div>
                 <strong>Pago pendiente</strong>
-                <p>Tienes una solicitud de pago para esta reservación.</p>
+                <p>Tienes una solicitud de pago para este {detailLabel}.</p>
               </div>
             </div>
             <div className="mobile-total-row">
@@ -743,15 +840,19 @@ export function ReservationPublicView({
           </section>
         )}
 
+        {!limitedPublicView && (
         <section
           className={`mobile-section reservation-members-section ${
-            !authUser && (view === "login" || view === "register")
+            !authUser &&
+            (view === "login" ||
+              view === "register" ||
+              view === "recover-password")
               ? "with-auth-panel"
               : ""
           }`}
         >
           <div className="mobile-section-head">
-            <h2>Integrantes de la reservación</h2>
+            <h2>Integrantes del {detailLabel}</h2>
             <span>
               {memberIds.length}
               {capacity > 0 ? `/${capacity}` : ""} personas
@@ -837,8 +938,12 @@ export function ReservationPublicView({
             </p>
           )}
         </section>
+        )}
 
-        {!authUser && (view === "login" || view === "register") && (
+        {!authUser &&
+          (view === "login" ||
+            view === "register" ||
+            view === "recover-password") && (
           <div className="reservation-auth-desktop-slot">
             <ReservationAuthPanel
               view={view}
@@ -846,15 +951,19 @@ export function ReservationPublicView({
               errors={errors}
               registerForm={registerForm}
               loginForm={loginForm}
+              passwordResetForm={passwordResetForm}
               onRegisterFieldChange={onRegisterFieldChange}
               onLoginFieldChange={onLoginFieldChange}
+              onPasswordResetFieldChange={onPasswordResetFieldChange}
               onRegisterSubmit={onRegisterSubmit}
               onLoginSubmit={onLoginSubmit}
+              onPasswordResetSubmit={onPasswordResetSubmit}
               flowStatus={flowStatus}
             />
           </div>
         )}
 
+        {!limitedPublicView && (
         <section className="mobile-card-grid reservation-info-grid">
           <InfoRow icon="users" label="Personas">
             {capacity || "Por confirmar"}
@@ -900,7 +1009,9 @@ export function ReservationPublicView({
             </InfoRow>
           )}
         </section>
+        )}
 
+        {!limitedPublicView && (
         <section className="mobile-section reservation-products-section">
           <div className="mobile-section-head">
             <h2>Productos</h2>
@@ -937,7 +1048,9 @@ export function ReservationPublicView({
             )}
           </div>
         </section>
+        )}
 
+        {!limitedPublicView && (
         <section className="mobile-summary-card">
           {/* <div className="mobile-section-head">
           <h2>Resumen</h2>
@@ -970,6 +1083,7 @@ export function ReservationPublicView({
             </strong>
           </div>
         </section>
+        )}
 
         {/* {authUser && !pendingPaymentRequest && (
         <button

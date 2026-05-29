@@ -127,10 +127,13 @@ function PlanAuthPanel({
   errors,
   registerForm,
   loginForm,
+  passwordResetForm,
   onRegisterFieldChange,
   onLoginFieldChange,
+  onPasswordResetFieldChange,
   onRegisterSubmit,
   onLoginSubmit,
+  onPasswordResetSubmit,
   flowStatus,
 }) {
   if (view === "register") {
@@ -198,6 +201,54 @@ function PlanAuthPanel({
     );
   }
 
+  if (view === "recover-password") {
+    const isSuccess = flowStatus === "password-reset-sent";
+
+    return (
+      <form className="plan-auth-card" onSubmit={onPasswordResetSubmit} noValidate>
+        <div>
+          <span>Recuperar contraseña</span>
+          <strong>Te enviaremos un correo</strong>
+        </div>
+        <label>
+          <span>Email</span>
+          <input
+            name="email"
+            type="email"
+            value={passwordResetForm.email}
+            onChange={onPasswordResetFieldChange}
+          />
+          {errors.email && <small>{errors.email}</small>}
+        </label>
+        {errors.form && (
+          <p
+            className={`status-note ${
+              isSuccess ? "success-note" : "error-note"
+            }`}
+          >
+            {errors.form}
+          </p>
+        )}
+        <button
+          className="primary-button"
+          disabled={flowStatus === "recovering-password"}
+          type="submit"
+        >
+          {flowStatus === "recovering-password"
+            ? "Enviando..."
+            : "Enviar correo"}
+        </button>
+        <button
+          className="ghost-button"
+          type="button"
+          onClick={() => setView("login")}
+        >
+          Volver al inicio de sesión
+        </button>
+      </form>
+    );
+  }
+
   return (
     <form className="plan-auth-card" onSubmit={onLoginSubmit} noValidate>
       <div>
@@ -238,6 +289,13 @@ function PlanAuthPanel({
         onClick={() => setView("register")}
       >
         Registro rápido
+      </button>
+      <button
+        className="text-button"
+        type="button"
+        onClick={() => setView("recover-password")}
+      >
+        Recuperar contraseña
       </button>
     </form>
   );
@@ -294,10 +352,13 @@ export default function PlanWebView({
   errors,
   registerForm,
   loginForm,
+  passwordResetForm,
   onRegisterFieldChange,
   onLoginFieldChange,
+  onPasswordResetFieldChange,
   onRegisterSubmit,
   onLoginSubmit,
+  onPasswordResetSubmit,
   joinCurrentPlan,
   leaveCurrentPlan,
   resolveRequest,
@@ -370,7 +431,9 @@ export default function PlanWebView({
       ? "Cancelar solicitud"
       : actionText;
   const canPromptLoginForMoreAttendees = !authUser && attendees.length >= 20;
-  const showAuthSide = !authUser && (view === "register" || view === "login");
+  const showAuthSide =
+    !authUser &&
+    (view === "register" || view === "login" || view === "recover-password");
 
   const loadNextAttendeesPage = async () => {
     if (
@@ -550,7 +613,10 @@ export default function PlanWebView({
       <section
         className={`plan-web-content ${showAuthSide ? "has-side" : "is-full"}`}
       >
-        {!authUser && (view === "register" || view === "login") && (
+        {!authUser &&
+          (view === "register" ||
+            view === "login" ||
+            view === "recover-password") && (
           <div className="plan-web-mobile-auth">
             <PlanAuthPanel
               view={view}
@@ -558,10 +624,13 @@ export default function PlanWebView({
               errors={errors}
               registerForm={registerForm}
               loginForm={loginForm}
+              passwordResetForm={passwordResetForm}
               onRegisterFieldChange={onRegisterFieldChange}
               onLoginFieldChange={onLoginFieldChange}
+              onPasswordResetFieldChange={onPasswordResetFieldChange}
               onRegisterSubmit={onRegisterSubmit}
               onLoginSubmit={onLoginSubmit}
+              onPasswordResetSubmit={onPasswordResetSubmit}
               flowStatus={flowStatus}
             />
           </div>
@@ -733,10 +802,13 @@ export default function PlanWebView({
                 errors={errors}
                 registerForm={registerForm}
                 loginForm={loginForm}
+                passwordResetForm={passwordResetForm}
                 onRegisterFieldChange={onRegisterFieldChange}
                 onLoginFieldChange={onLoginFieldChange}
+                onPasswordResetFieldChange={onPasswordResetFieldChange}
                 onRegisterSubmit={onRegisterSubmit}
                 onLoginSubmit={onLoginSubmit}
+                onPasswordResetSubmit={onPasswordResetSubmit}
                 flowStatus={flowStatus}
               />
             </div>

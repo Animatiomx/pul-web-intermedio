@@ -38,9 +38,11 @@ import {
 import {
   validateGuestForm,
   validateLoginForm,
+  validatePasswordResetForm,
   validateRegisterForm,
 } from "../../../shared/utils/validators";
 import {
+  sendFirebasePasswordReset,
   signInWithFirebasePassword,
   signUpWithFirebasePassword,
 } from "../../auth/services/firebaseAuth.service";
@@ -66,10 +68,14 @@ import PublicInviteView from "./PublicInviteView";
 import { fetchEventParticipantsPage } from "../../events/services/eventParticipants.service";
 import {
   beginReservationPayment,
+  beginEventDetailPayment,
   completeReservationPayment,
+  completeEventDetailPayment,
   getPendingPaymentRequest,
+  joinEventDetailTransaction,
   joinReservationTransaction,
   releaseReservationPaymentLock,
+  releaseEventDetailPaymentLock,
   shouldHideReservationForUser,
 } from "../../reservations/services/reservationParticipation.service";
 import { sendOneSignalNotification } from "../../../shared/services/notifications.service";
@@ -84,6 +90,10 @@ const initialForm = {
 const initialLoginForm = {
   email: "",
   password: "",
+};
+
+const initialPasswordResetForm = {
+  email: "",
 };
 
 const initialGuestForm = {
@@ -197,6 +207,9 @@ function PublicInviteScreen() {
   const [view, setView] = useState("landing");
   const [registerForm, setRegisterForm] = useState(initialForm);
   const [loginForm, setLoginForm] = useState(initialLoginForm);
+  const [passwordResetForm, setPasswordResetForm] = useState(
+    initialPasswordResetForm,
+  );
   const [guestForm, setGuestForm] = useState(initialGuestForm);
   const [selectedItemId, setSelectedItemId] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -606,9 +619,56 @@ function PublicInviteScreen() {
       context.kind === "event" || context.kind === "eventDetail";
     if (!context.id || !isEventContext || !authUser) return;
 
-    const collectionName =
-      context.kind === "eventDetail" ? "eventosUsers" : "eventos";
-    const eventRef = doc(db, collectionName, context.id);
+    if (context.kind === "eventDetail") {
+      let hasResolvedSnapshot = false;
+      const applyEventDetailSnapshot = (snap) => {
+        if (!snap.exists()) return;
+        const data = { id: snap.id, ...snap.data() };
+        if (data.sourceType && data.sourceType !== "event") return;
+        hasResolvedSnapshot = true;
+        setInviteIfChanged(
+          setInvite,
+          normalizeEvent({ fields: null, ...data }, snap.id, "eventDetail"),
+        );
+        setInviteStatus("ready");
+      };
+
+      const unsubscribes = [
+        onSnapshot(
+          doc(db, "reservaciones", context.id),
+          applyEventDetailSnapshot,
+          (error) => {
+            console.error(
+              `${DEBUG_PREFIX} Error en listener de reservación de evento`,
+              error,
+            );
+            setInviteStatus("fallback");
+          },
+        ),
+        onSnapshot(
+          doc(db, "eventosUsers", context.id),
+          applyEventDetailSnapshot,
+          (error) => {
+            console.error(
+              `${DEBUG_PREFIX} Error en listener de detalle de evento`,
+              error,
+            );
+            setInviteStatus("fallback");
+          },
+        ),
+      ];
+
+      const notFoundTimeout = window.setTimeout(() => {
+        if (!hasResolvedSnapshot) showNotFound("event");
+      }, 1800);
+
+      return () => {
+        window.clearTimeout(notFoundTimeout);
+        unsubscribes.forEach((unsubscribe) => unsubscribe());
+      };
+    }
+
+    const eventRef = doc(db, "eventos", context.id);
     const unsubscribe = onSnapshot(
       eventRef,
       (snap) => {
@@ -640,6 +700,17 @@ function PublicInviteScreen() {
     const isEventContext =
       context.kind === "event" || context.kind === "eventDetail";
     if (!context.id || !isEventContext) {
+      return;
+    }
+
+    if (context.kind === "eventDetail") {
+      const rawAttendees = invite.raw?.integrantes || [];
+      setEventAttendees(
+        rawAttendees.slice(0, 20).map((item) => normalizeUserSummary(item)),
+      );
+      setEventAttendeesCursor("");
+      setEventAttendeesHasMore(rawAttendees.length > 20);
+      setEventAttendeesLoading(false);
       return;
     }
 
@@ -800,7 +871,7 @@ function PublicInviteScreen() {
   ].slice(0, 4);
 
   useEffect(() => {
-    if (!isReserva || !planJoinMessage) return undefined;
+    if (!(isReserva || isEventDetail) || !planJoinMessage) return undefined;
 
     const timeoutId = window.setTimeout(() => {
       setPlanJoinMessage("");
@@ -810,7 +881,7 @@ function PublicInviteScreen() {
     }, 5000);
 
     return () => window.clearTimeout(timeoutId);
-  }, [flowStatus, isReserva, planJoinMessage]);
+  }, [flowStatus, isEventDetail, isReserva, planJoinMessage]);
 
   if (isComingSoonView) {
     return (
@@ -884,6 +955,13 @@ function PublicInviteScreen() {
   const onLoginFieldChange = (event) => {
     const { name, value } = event.target;
     setLoginForm((current) => ({ ...current, [name]: value }));
+    setErrors((current) => ({ ...current, [name]: undefined }));
+  };
+
+  /** Sincroniza el correo de recuperacion y limpia errores del campo. */
+  const onPasswordResetFieldChange = (event) => {
+    const { name, value } = event.target;
+    setPasswordResetForm((current) => ({ ...current, [name]: value }));
     setErrors((current) => ({ ...current, [name]: undefined }));
   };
 
@@ -1003,7 +1081,13 @@ function PublicInviteScreen() {
 
     setFlowStatus("authenticated");
 
-    setView(isReserva ? "payment" : isEvent ? "event-checkout" : "landing");
+    setView(
+      isReserva || isEventDetail
+        ? "payment"
+        : isEvent
+          ? "event-checkout"
+          : "landing",
+    );
 
     setPlanJoinMessage("");
 
@@ -1129,6 +1213,32 @@ function PublicInviteScreen() {
     } catch (error) {
       setFlowStatus("login-error");
       setErrors({ form: error.message || "No se pudo iniciar sesión." });
+    }
+  };
+
+  /** Envia correo de recuperacion desde el mismo flujo de login. */
+  const onPasswordResetSubmit = async (event) => {
+    event.preventDefault();
+    const nextErrors = validatePasswordResetForm(passwordResetForm);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    setFlowStatus("recovering-password");
+    try {
+      await sendFirebasePasswordReset(
+        passwordResetForm.email.trim().toLowerCase(),
+      );
+      setFlowStatus("password-reset-sent");
+      setErrors({
+        form: "Te enviamos un correo para recuperar tu contraseña.",
+      });
+    } catch (error) {
+      setFlowStatus("password-reset-error");
+      setErrors({
+        form:
+          error.message ||
+          "No pudimos enviar el correo de recuperación. Intenta de nuevo.",
+      });
     }
   };
 
@@ -1426,7 +1536,7 @@ function PublicInviteScreen() {
   };
 
   const joinCurrentReservation = async () => {
-    if (!authUser || !invite.id || !isReserva) {
+    if (!authUser || !invite.id || !(isReserva || isEventDetail)) {
       setView("login");
       return;
     }
@@ -1435,9 +1545,16 @@ function PublicInviteScreen() {
     setPlanJoinMessage("");
     setFlowStatus("idle");
     try {
-      const result = await joinReservationTransaction(invite.id, authUser);
-      setPlanJoinMessage("Ya formas parte de esta reservación.");
+      const result = isEventDetail
+        ? await joinEventDetailTransaction(invite.id, authUser)
+        : await joinReservationTransaction(invite.id, authUser);
+      setPlanJoinMessage(
+        isEventDetail
+          ? "Ya formas parte de este evento."
+          : "Ya formas parte de esta reservación.",
+      );
       if (
+        !isEventDetail &&
         result?.reservation?.anfitrion?.id &&
         result.reservation.anfitrion.id !== getUserId(authUser)
       ) {
@@ -1448,9 +1565,24 @@ function PublicInviteScreen() {
           { view: "ReservaDetail", id: invite.id, origin: "" },
         );
       }
+      if (
+        isEventDetail &&
+        result?.eventDetail?.anfitrion?.id &&
+        result.eventDetail.anfitrion.id !== getUserId(authUser)
+      ) {
+        await sendOneSignalNotification(
+          [result.eventDetail.anfitrion.id],
+          `Nuevo integrante en ${result.eventDetail.evento?.nombre || "tu evento"}`,
+          `${authUser.nombre || "Un usuario"} se unió a la compra.`,
+          { view: "BoletoDetail", id: invite.id, origin: "" },
+        );
+      }
     } catch (error) {
       setPlanJoinMessage(
-        error.message || "No pudimos agregarte a la reservación.",
+        error.message ||
+          (isEventDetail
+            ? "No pudimos agregarte al evento."
+            : "No pudimos agregarte a la reservación."),
       );
       setFlowStatus("plan-join-error");
     } finally {
@@ -1459,7 +1591,7 @@ function PublicInviteScreen() {
   };
 
   const payPendingReservationRequest = async () => {
-    if (!authUser || !invite.id || !isReserva) {
+    if (!authUser || !invite.id || !(isReserva || isEventDetail)) {
       setView("login");
       return;
     }
@@ -1478,7 +1610,9 @@ function PublicInviteScreen() {
     let checkoutStarted = false;
 
     try {
-      const paymentClaim = await beginReservationPayment(invite.id, userId);
+      const paymentClaim = isEventDetail
+        ? await beginEventDetailPayment(invite.id, userId)
+        : await beginReservationPayment(invite.id, userId);
       paymentLockId = paymentClaim.lockId;
       const idStripe = await ensureStripeCustomer(authUser);
 
@@ -1488,13 +1622,19 @@ function PublicInviteScreen() {
         captureMethod: invite?.raw?.status === "curso" ? "automatic" : "manual",
         metadata: {
           id_ref: invite.id,
-          vista: "detalle_reserva_pago_pendiente",
+          vista: isEventDetail
+            ? "detalle_evento_pago_pendiente"
+            : "detalle_reserva_pago_pendiente",
           user_id: userId,
         },
       });
 
       if (!result?.paymentIntent || !result?.publishableKey) {
-        await releaseReservationPaymentLock(invite.id, userId, paymentLockId);
+        if (isEventDetail) {
+          await releaseEventDetailPaymentLock(invite.id, userId, paymentLockId);
+        } else {
+          await releaseReservationPaymentLock(invite.id, userId, paymentLockId);
+        }
         paymentLockId = "";
         setFlowStatus("payment-error");
         setPlanJoinMessage(
@@ -1516,7 +1656,11 @@ function PublicInviteScreen() {
       });
     } catch (error) {
       if (!checkoutStarted && paymentLockId) {
-        await releaseReservationPaymentLock(invite.id, userId, paymentLockId);
+        if (isEventDetail) {
+          await releaseEventDetailPaymentLock(invite.id, userId, paymentLockId);
+        } else {
+          await releaseReservationPaymentLock(invite.id, userId, paymentLockId);
+        }
       }
       setPlanJoinMessage(error.message || "No se pudo iniciar el pago.");
       setFlowStatus("payment-error");
@@ -1531,11 +1675,10 @@ function PublicInviteScreen() {
     const userId = getUserId(authUser);
     if (!session?.lockId || !userId || !invite.id) return;
 
-    await releaseReservationPaymentLock(
-      invite.id,
-      userId,
-      session.lockId,
-    ).catch((error) => {
+    const releaseLock = isEventDetail
+      ? releaseEventDetailPaymentLock
+      : releaseReservationPaymentLock;
+    await releaseLock(invite.id, userId, session.lockId).catch((error) => {
       console.warn(`${DEBUG_PREFIX} No se pudo liberar el lock de pago`, error);
     });
   };
@@ -1548,8 +1691,7 @@ function PublicInviteScreen() {
     setReservationPaymentLoading(true);
     setPlanJoinMessage("");
     try {
-      await completeReservationPayment({
-        reservationId: invite.id,
+      const paymentPayload = {
         userId,
         lockId: session.lockId,
         paymentIntentId: paymentIntent?.id || session.paymentIntentId || "",
@@ -1561,7 +1703,18 @@ function PublicInviteScreen() {
           imagen: authUser.imagen || session.request?.imagen || "",
           monto: session.amount,
         },
-      });
+      };
+      if (isEventDetail) {
+        await completeEventDetailPayment({
+          ...paymentPayload,
+          eventDetailId: invite.id,
+        });
+      } else {
+        await completeReservationPayment({
+          ...paymentPayload,
+          reservationId: invite.id,
+        });
+      }
 
       if (invite.raw?.anfitrion?.id && invite.raw.anfitrion.id !== userId) {
         await sendOneSignalNotification(
@@ -1589,6 +1742,7 @@ function PublicInviteScreen() {
     sessionStorage.removeItem("pulExpressUser");
     setAuthUser(null);
     setView("landing");
+    setPasswordResetForm(initialPasswordResetForm);
     setPlanJoinMessage("");
     setPlanRequests([]);
     setPlanWaitlist([]);
@@ -1619,10 +1773,13 @@ function PublicInviteScreen() {
         errors={errors}
         registerForm={registerForm}
         loginForm={loginForm}
+        passwordResetForm={passwordResetForm}
         onRegisterFieldChange={onRegisterFieldChange}
         onLoginFieldChange={onLoginFieldChange}
+        onPasswordResetFieldChange={onPasswordResetFieldChange}
         onRegisterSubmit={onRegisterSubmit}
         onLoginSubmit={onLoginSubmit}
+        onPasswordResetSubmit={onPasswordResetSubmit}
         joinCurrentPlan={joinCurrentPlan}
         leaveCurrentPlan={leaveCurrentPlan}
         resolveRequest={resolveRequest}
@@ -1683,8 +1840,11 @@ function PublicInviteScreen() {
       onRegisterFieldChange={onRegisterFieldChange}
       onRegisterSubmit={onRegisterSubmit}
       loginForm={loginForm}
+      passwordResetForm={passwordResetForm}
       onLoginFieldChange={onLoginFieldChange}
+      onPasswordResetFieldChange={onPasswordResetFieldChange}
       onLoginSubmit={onLoginSubmit}
+      onPasswordResetSubmit={onPasswordResetSubmit}
       acceptAndPay={acceptAndPay}
       joinCurrentPlan={joinCurrentPlan}
     />

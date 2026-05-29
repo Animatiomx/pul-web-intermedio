@@ -32,6 +32,17 @@ export function validateLoginForm(form) {
 }
 
 /**
+ * Valida el correo para recuperar contraseña.
+ */
+export function validatePasswordResetForm(form) {
+  const errors = {};
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+    errors.email = "Usa un email válido.";
+  }
+  return errors;
+}
+
+/**
  * Valida comprador invitado para compras web de eventos.
  */
 export function validateGuestForm(form) {

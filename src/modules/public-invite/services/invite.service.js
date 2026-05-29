@@ -301,6 +301,67 @@ export function normalizeReserva(document, id, resourceType = "reservacion") {
  */
 export function normalizeEvent(document, id, kind = "event") {
   const data = normalizeFirestoreDocument(document);
+  if (kind === "eventDetail") {
+    const event = data.evento || data.eventPurchase?.event || {};
+    const boleto = data.boleto || data.eventPurchase?.boleto || {};
+    const mesa = data.mesa || data.eventPurchase?.mesa || {};
+    const integrantes = Array.isArray(data.integrantes)
+      ? data.integrantes
+      : [];
+    const integrantesIds = getUniqueIds([
+      ...(Array.isArray(data.integrantesIds) ? data.integrantesIds : []),
+      ...integrantes.map((member) => member?.id),
+    ]);
+
+    return {
+      id: data.id || id,
+      kind,
+      title: event.nombre || data.nombre || "Detalle de evento",
+      description:
+        data.peticion ||
+        event.descripcion ||
+        event.especificaciones ||
+        "Detalle de evento compartido contigo en Pul.",
+      date: event.fechaString || data.fecha || "",
+      time: event.horaInicio || data.hora || "",
+      endDate: event.fechaStringFin || data.fechaFin || "",
+      endTime: event.horaFin || data.horaFin || "",
+      address: event.ubicacion || data.negocio?.direccion || "",
+      host: data.anfitrion?.nombre || data.nombreNegocio || "Anfitrión Pul",
+      hostImage: data.anfitrion?.imagen || "",
+      capacity: Number(data.personas || data.noPersonas || 0),
+      members: integrantesIds.length,
+      tags: ["Detalle de evento", boleto.nombre || mesa.zona || ""].filter(
+        Boolean,
+      ),
+      image: event.fotoHome || event.fotos?.[0] || data.negocio?.imagen || "",
+      images: event.fotos || [],
+      amount: null,
+      total: Number(data.cuentaCurso?.total || data.cuenta?.total || 0),
+      subtotal: Number(data.cuentaCurso?.subtotal || data.cuenta?.subtotal || 0),
+      fee: Number(
+        data.cuentaCurso?.comisionStripe || data.cuenta?.comisionStripe || 0,
+      ),
+      participants: integrantesIds.length,
+      resourceType: "evento",
+      itemLabel:
+        mesa?.tipoMesa || mesa?.zona || boleto?.nombre || "Boleto de evento",
+      tickets: [],
+      tables: [],
+      schedule: event.cronograma || "",
+      rules: event.reglas || "",
+      details: event.especificaciones || "",
+      periodicity: Array.isArray(event.periodicidad) ? event.periodicidad : [],
+      raw: {
+        ...data,
+        evento: event,
+        boleto,
+        mesa,
+        integrantesIds,
+      },
+    };
+  }
+
   const tickets = Array.isArray(data.boletosTipo)
     ? data.boletosTipo.map((ticket) => ({
         id: ticket.id || ticket.nombre,
@@ -573,11 +634,15 @@ export async function fetchInvite(context) {
   }
 
   if (context.kind === "eventDetail") {
-    const eventDetail = normalizeEvent(
-      (await fetchPublicInviteDocument("eventosUsers", context.id)).data,
-      context.id,
-      "eventDetail",
-    );
+    let payload;
+    try {
+      payload = await fetchPublicInviteDocument("eventosUsers", context.id);
+    } catch (error) {
+      if (![400, 404].includes(Number(error?.status))) throw error;
+      payload = await fetchPublicInviteDocument("reserva", context.id);
+    }
+
+    const eventDetail = normalizeEvent(payload.data, context.id, "eventDetail");
     console.info(`${DEBUG_PREFIX} Detalle de evento normalizado`, eventDetail);
     return eventDetail;
   }
