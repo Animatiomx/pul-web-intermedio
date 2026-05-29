@@ -698,20 +698,7 @@ function PublicInviteScreen() {
   }, [authUser, context.id, context.kind, showNotFound]);
 
   useEffect(() => {
-    const isEventContext =
-      context.kind === "event" || context.kind === "eventDetail";
-    if (!context.id || !isEventContext) {
-      return;
-    }
-
-    if (context.kind === "eventDetail") {
-      const rawAttendees = invite.raw?.integrantes || [];
-      setEventAttendees(
-        rawAttendees.slice(0, 20).map((item) => normalizeUserSummary(item)),
-      );
-      setEventAttendeesCursor("");
-      setEventAttendeesHasMore(rawAttendees.length > 20);
-      setEventAttendeesLoading(false);
+    if (!context.id || context.kind !== "event") {
       return;
     }
 
