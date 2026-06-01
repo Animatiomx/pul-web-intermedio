@@ -1574,6 +1574,7 @@ export function EventPublicView({
   onPasswordResetSubmit,
   onLogout,
   flowStatus,
+  planJoinMessage,
 }) {
   const event = invite.raw || {};
   const images = Array.from(
@@ -1875,6 +1876,27 @@ export function EventPublicView({
           )}
         </article>
       </section>
+
+      {(flowStatus === "event-paid" || planJoinMessage) && (
+        <section
+          className={`mobile-section ${
+            flowStatus === "purchase-error" ? "error-note" : "success-note"
+          }`}
+          aria-live="polite"
+        >
+          <div className="mobile-section-head">
+            <h2>
+              {flowStatus === "event-paid"
+                ? "Compra exitosa"
+                : "Estado de compra"}
+            </h2>
+          </div>
+          <p>
+            {planJoinMessage ||
+              "Tu pago fue aprobado y tu compra quedo registrada correctamente."}
+          </p>
+        </section>
+      )}
 
       <section className="event-web-purchase" id="comprar">
         <div className="mobile-section-head">

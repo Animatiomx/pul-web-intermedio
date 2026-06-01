@@ -20,7 +20,7 @@ function getRandomInt(max) {
   return Math.floor(Math.random() * max);
 }
 
-function generateTicketClaimCode() {
+export function generateTicketClaimCode() {
   return Array.from({ length: CLAIM_LENGTH }, () =>
     CLAIM_ALPHABET[getRandomInt(CLAIM_ALPHABET.length)],
   ).join("");
@@ -80,6 +80,8 @@ function buildMember(buyer, fallbackId) {
   return {
     id,
     nombre: buyer?.nombre || buyer?.displayName || buyer?.email || "",
+    email: buyer?.email || "",
+    telefono: buyer?.telefono || buyer?.phone || "",
     imagen: buyer?.imagen || buyer?.photoURL || "",
     pushToken: buyer?.pushToken || "",
     divider: false,
@@ -170,6 +172,8 @@ export function buildEventPurchaseDraft({
     anfitrion: {
       id: member.id,
       nombre: member.nombre,
+      email: member.email,
+      telefono: member.telefono,
       imagen: member.imagen,
       pushToken: member.pushToken,
     },
@@ -198,6 +202,8 @@ export function buildEventPurchaseDraft({
         fecha: now,
         id: member.id,
         nombre: member.nombre,
+        email: member.email,
+        telefono: member.telefono,
         imagen: member.imagen,
         monto: cuenta.total,
       },
@@ -220,7 +226,7 @@ export function buildEventPurchaseDraft({
       id: getUserId(buyer) || "",
       nombre: buyer?.nombre || buyer?.displayName || "",
       email: buyer?.email || "",
-      telefono: buyer?.telefono || "",
+      telefono: buyer?.telefono || buyer?.phone || "",
       method: buyer?.method || "",
     },
   };
@@ -422,6 +428,8 @@ export async function redeemTicketClaimCode(code, user) {
       anfitrion: {
         id: userId,
         nombre: member.nombre,
+        email: member.email,
+        telefono: member.telefono,
         imagen: member.imagen,
         pushToken: member.pushToken,
       },

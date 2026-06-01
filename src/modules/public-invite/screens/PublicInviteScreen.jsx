@@ -18,7 +18,7 @@ import {
   BACKEND_URL,
   DEBUG_PREFIX,
   EMAIL_CONFIRMATION_ENDPOINT,
-  EVENT_CHECKOUT_ENDPOINT,
+  EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT,
   PLAY_STORE_URL,
   RESERVA_RESPONSE_ENDPOINT,
   STRIPE_CHECKOUT_ENDPOINT,
@@ -71,7 +71,7 @@ import {
   buildEventPurchaseDraft,
   calculateEventPurchaseCuenta,
   commitEventPurchase,
-  generateUniqueTicketClaimCode,
+  generateTicketClaimCode,
 } from "../../events/services/eventPurchase.service";
 import {
   beginReservationPayment,
@@ -166,6 +166,14 @@ function setInviteIfChanged(setInvite, nextInvite) {
       ? current
       : nextInvite,
   );
+}
+
+function getEventPurchaseStorageKey(eventId) {
+  return `pulEventPurchase:${eventId}`;
+}
+
+function getPendingGuestPurchaseStorageKey(eventId) {
+  return `pulPendingGuestEventPurchase:${eventId}`;
 }
 
 function PulLoader() {
@@ -409,6 +417,76 @@ function PublicInviteScreen() {
       ignore = true;
     };
   }, [authUser, context, isComingSoonView, showNotFound]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const sessionId = url.searchParams.get("session_id");
+    const paymentStatus = url.searchParams.get("payment");
+    const eventId = url.searchParams.get("eventId") || context.id;
+
+    if (
+      context.kind !== "event" ||
+      paymentStatus !== "success" ||
+      !sessionId ||
+      !eventId
+    ) {
+      return;
+    }
+
+    const pendingKey = getPendingGuestPurchaseStorageKey(eventId);
+    let ignore = false;
+    const completeGuestPurchase = async () => {
+      setFlowStatus("purchasing");
+      setPlanJoinMessage("Registrando tu compra...");
+      try {
+        const storedPurchase = sessionStorage.getItem(pendingKey);
+        if (!storedPurchase) {
+          throw new Error(
+            "El pago fue aprobado, pero no encontramos los datos locales de la compra para registrarla.",
+          );
+        }
+        const purchase = JSON.parse(storedPurchase);
+        await postJson(EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT, {
+          sessionId,
+          purchase,
+        });
+        sessionStorage.setItem(
+          getEventPurchaseStorageKey(eventId),
+          JSON.stringify(purchase),
+        );
+        sessionStorage.removeItem(pendingKey);
+        await sendTicketEmail(purchase).catch((error) => {
+          console.warn(
+            `${DEBUG_PREFIX} Compra registrada, pero no se pudo enviar el correo`,
+            error,
+          );
+        });
+        if (ignore) return;
+        setPlanJoinMessage(
+          "Tu pago fue aprobado y tu compra quedo registrada correctamente.",
+        );
+        setFlowStatus("event-paid");
+        url.searchParams.delete("session_id");
+        window.history.replaceState({}, "", url.toString());
+      } catch (error) {
+        if (ignore) return;
+        console.error(`${DEBUG_PREFIX} No se pudo registrar compra invitada`, {
+          endpoint: EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT,
+          error,
+        });
+        setPlanJoinMessage(
+          error.message || "El pago fue aprobado, pero no pudimos registrar la compra.",
+        );
+        setFlowStatus("purchase-error");
+      }
+    };
+
+    completeGuestPurchase();
+
+    return () => {
+      ignore = true;
+    };
+  }, [context.id, context.kind]);
 
   useEffect(() => {
     if (!context.id || context.kind !== "plan") return;
@@ -1379,9 +1457,12 @@ function PublicInviteScreen() {
     try {
       const isGuestPurchase = buyer?.method === "guest";
       purchaseType = selectedItem.type === "table" ? "zona" : "ticket";
-      ticketClaimCode = isGuestPurchase ? await generateUniqueTicketClaimCode() : "";
+      ticketClaimCode = isGuestPurchase ? generateTicketClaimCode() : "";
+      const buyerName = buyer?.nombre || buyer?.displayName || "";
+      const buyerEmail = buyer?.email || "";
+      const buyerPhone = buyer?.telefono || buyer?.phone || "";
       const purchaseId =
-        `web-${invite.id}-${selectedItem.id}-${buyer.email}`.replace(
+        `web-${invite.id}-${selectedItem.id}-${buyerEmail}`.replace(
           /[^a-zA-Z0-9_-]/g,
           "-",
         );
@@ -1400,26 +1481,69 @@ function PublicInviteScreen() {
         eventName: invite.title,
         item: selectedItem,
         quantity,
+        amount: guestTotal,
+        amountCents: toStripeAmount(guestTotal),
+        monto: guestTotal,
+        subtotal: guestSubtotal,
+        serviceFee: guestServiceFee,
+        comisionStripe: guestServiceFee,
         total: guestTotal,
-        buyer,
+        buyer: {
+          ...buyer,
+          nombre: buyerName,
+          email: buyerEmail,
+          telefono: buyerPhone,
+        },
         ticketClaimCode,
         eventPurchaseDraft,
         qrPayload: JSON.stringify({
           eventId: invite.id,
           itemId: selectedItem.id,
           quantity,
-          email: buyer.email,
+          email: buyerEmail,
           ticketClaimCode,
         }),
-        successUrl: `${window.location.origin}${window.location.pathname}?eventId=${invite.id}&payment=success`,
+        guest: isGuestPurchase,
+        checkoutMode: isGuestPurchase ? "guest" : "authenticated",
+        idStripe: "",
+        customer: null,
+        customerEmail: buyerEmail,
+        customer_email: buyerEmail,
+        customerName: buyerName,
+        customer_name: buyerName,
+        customerPhone: buyerPhone,
+        customer_phone: buyerPhone,
+        metadata: {
+          id_ref: invite.id,
+          vista: "evento_web_invitado",
+          purchase_id: purchaseId,
+          item_id: selectedItem.id,
+          buyer_email: buyerEmail,
+          buyer_name: buyerName,
+          buyer_phone: buyerPhone,
+          ticket_claim_code: ticketClaimCode,
+        },
+        successUrl: `${window.location.origin}${window.location.pathname}?eventId=${invite.id}&payment=success&session_id={CHECKOUT_SESSION_ID}`,
         cancelUrl: window.location.href,
       };
-      const result = await postJson(
-        EVENT_CHECKOUT_ENDPOINT || STRIPE_CHECKOUT_ENDPOINT,
-        purchase,
-      );
-      if (result?.url) {
-        window.location.assign(result.url);
+      if (isGuestPurchase) {
+        sessionStorage.setItem(
+          getPendingGuestPurchaseStorageKey(invite.id),
+          JSON.stringify(purchase),
+        );
+      }
+      const result = await postJson(STRIPE_CHECKOUT_ENDPOINT, purchase);
+      const checkoutUrl = getCheckoutUrl(result);
+      if (checkoutUrl) {
+        window.location.assign(checkoutUrl);
+        return;
+      }
+
+      if (isGuestPurchase) {
+        setPlanJoinMessage(
+          "Stripe no devolvi\u00f3 una URL de pago para abrir el checkout.",
+        );
+        setFlowStatus("purchase-error");
         return;
       }
 
@@ -1439,15 +1563,13 @@ function PublicInviteScreen() {
         );
       });
       sessionStorage.setItem(
-        `pulEventPurchase:${invite.id}`,
+        getEventPurchaseStorageKey(invite.id),
         JSON.stringify(purchase),
       );
       setFlowStatus("event-paid");
-    } catch {
+    } catch (error) {
       if (
-        !EVENT_CHECKOUT_ENDPOINT &&
-        !STRIPE_CHECKOUT_ENDPOINT &&
-        !EMAIL_CONFIRMATION_ENDPOINT
+        !STRIPE_CHECKOUT_ENDPOINT && !EMAIL_CONFIRMATION_ENDPOINT
       ) {
         await new Promise((resolve) => window.setTimeout(resolve, 900));
         await commitEventPurchase({
@@ -1460,13 +1582,21 @@ function PublicInviteScreen() {
         });
         if (purchase) {
           sessionStorage.setItem(
-            `pulEventPurchase:${invite.id}`,
+            getEventPurchaseStorageKey(invite.id),
             JSON.stringify(purchase),
           );
         }
         setFlowStatus("event-paid");
         return;
       }
+      console.error(`${DEBUG_PREFIX} Error al abrir checkout invitado`, {
+        endpoint: STRIPE_CHECKOUT_ENDPOINT,
+        error,
+      });
+      setPlanJoinMessage(
+        error.message ||
+          "No se pudo abrir Stripe. Revisa que el endpoint de checkout est\u00e9 disponible.",
+      );
       setFlowStatus("purchase-error");
     }
   };
@@ -1563,10 +1693,13 @@ function PublicInviteScreen() {
         paymentIntentId: paymentIntent?.id || session.paymentIntentId || "",
       });
       sessionStorage.setItem(
-        `pulEventPurchase:${invite.id}`,
+        getEventPurchaseStorageKey(invite.id),
         JSON.stringify(purchase),
       );
       setEventPaymentSession(null);
+      setPlanJoinMessage(
+        "Tu pago fue aprobado y tu compra quedo registrada correctamente.",
+      );
       setFlowStatus("event-paid");
     } catch (error) {
       setPlanJoinMessage(error.message || "No se pudo registrar la compra.");

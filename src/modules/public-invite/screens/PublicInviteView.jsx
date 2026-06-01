@@ -155,6 +155,7 @@ export default function PublicInviteView({
         onPasswordResetSubmit={onPasswordResetSubmit}
         onLogout={onLogout}
         flowStatus={flowStatus}
+        planJoinMessage={planJoinMessage}
       />
     );
   }

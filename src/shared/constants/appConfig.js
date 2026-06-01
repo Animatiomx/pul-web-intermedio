@@ -8,15 +8,20 @@ export const EVENT_DETAIL_DEEP_LINK_BASE =
   import.meta.env.VITE_EVENT_DETAIL_DEEP_LINK_BASE || "pul://eventodetalle";
 export const EVENT_DEEP_LINK_BASE =
   import.meta.env.VITE_EVENT_DEEP_LINK_BASE || "pul://evento";
-export const EVENT_CHECKOUT_ENDPOINT =
-  import.meta.env.VITE_EVENT_CHECKOUT_ENDPOINT || "";
 export const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL || "https://api.pul.com.mx";
+export const EVENT_CHECKOUT_ENDPOINT =
+  import.meta.env.VITE_EVENT_CHECKOUT_ENDPOINT ||
+  `${BACKEND_URL}/stripe/create-checkout-session`;
 export const STRIPE_CHECKOUT_ENDPOINT =
   import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT ||
   `${BACKEND_URL}/stripe/create-checkout-session`;
 export const STRIPE_PAYMENT_INTENT_ENDPOINT =
-  import.meta.env.VITE_STRIPE_PAYMENT_INTENT_ENDPOINT || `${BACKEND_URL}/stripe/buy`;
+  import.meta.env.VITE_STRIPE_PAYMENT_INTENT_ENDPOINT ||
+  `${BACKEND_URL}/stripe/buy`;
+export const EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT =
+  import.meta.env.VITE_EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT ||
+  `${BACKEND_URL}/event-purchases/guest/complete`;
 export const PUBLIC_INVITE_ENDPOINT =
   import.meta.env.VITE_PUBLIC_INVITE_ENDPOINT || `${BACKEND_URL}/public`;
 export const EMAIL_CONFIRMATION_ENDPOINT =
