@@ -379,6 +379,7 @@ export function normalizeEvent(document, id, kind = "event") {
         description: ticket.descripcion || "",
         price: Number(ticket.precio || 0),
         available: Number(ticket.disponibles ?? ticket.cantidad ?? 0),
+        raw: ticket,
       }))
     : [];
   const tables = Array.isArray(data.mesas)
@@ -391,6 +392,10 @@ export function normalizeEvent(document, id, kind = "event") {
         description: table.especificaciones || table.zona || "",
         price: Number(table.costoMesa || table.ticketMesa || 0),
         available: table.disponible === false ? 0 : 1,
+        capacity: Number(table.ticketMesa || table.personas || 1),
+        zone: table.zona || "",
+        tableNumber: table.noMesa || "",
+        raw: table,
       }))
     : [];
 

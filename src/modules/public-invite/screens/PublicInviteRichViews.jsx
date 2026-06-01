@@ -500,6 +500,7 @@ function ReservationAuthPrompt({
   memberCount,
   capacity,
   availableSpots,
+  description = "Necesitamos tu usuario para validar cupo y pagos en tiempo real.",
 }) {
   return (
     <section className="reservation-auth-card reservation-auth-choice">
@@ -515,9 +516,7 @@ function ReservationAuthPrompt({
         <div>
           <span>Continúa con tu cuenta</span>
           <strong>Inicia sesión o regístrate</strong>
-          <p>
-            Necesitamos tu usuario para validar cupo y pagos en tiempo real.
-          </p>
+          <p>{description}</p>
         </div>
       </div>
       <div className="reservation-session-actions">
@@ -764,7 +763,11 @@ export function ReservationPublicView({
               capacity={capacity}
               availableSpots={availableSpots}
             />
-            <div className="reservation-current-user">
+            <div className="reservation-current-user event-current-user">
+              <img
+                src={authUser.imagen || authUser.photoURL || defaultAvatar}
+                alt=""
+              />
               <div>
                 <span>Sesión iniciada como</span>
                 <strong>
@@ -794,24 +797,24 @@ export function ReservationPublicView({
           (view === "login" ||
             view === "register" ||
             view === "recover-password") && (
-          <div className="reservation-auth-mobile-slot">
-            <ReservationAuthPanel
-              view={view}
-              setView={setView}
-              errors={errors}
-              registerForm={registerForm}
-              loginForm={loginForm}
-              passwordResetForm={passwordResetForm}
-              onRegisterFieldChange={onRegisterFieldChange}
-              onLoginFieldChange={onLoginFieldChange}
-              onPasswordResetFieldChange={onPasswordResetFieldChange}
-              onRegisterSubmit={onRegisterSubmit}
-              onLoginSubmit={onLoginSubmit}
-              onPasswordResetSubmit={onPasswordResetSubmit}
-              flowStatus={flowStatus}
-            />
-          </div>
-        )}
+            <div className="reservation-auth-mobile-slot">
+              <ReservationAuthPanel
+                view={view}
+                setView={setView}
+                errors={errors}
+                registerForm={registerForm}
+                loginForm={loginForm}
+                passwordResetForm={passwordResetForm}
+                onRegisterFieldChange={onRegisterFieldChange}
+                onLoginFieldChange={onLoginFieldChange}
+                onPasswordResetFieldChange={onPasswordResetFieldChange}
+                onRegisterSubmit={onRegisterSubmit}
+                onLoginSubmit={onLoginSubmit}
+                onPasswordResetSubmit={onPasswordResetSubmit}
+                flowStatus={flowStatus}
+              />
+            </div>
+          )}
 
         {!limitedPublicView && pendingPaymentRequest && (
           <section className="mobile-payment-card">
@@ -841,248 +844,248 @@ export function ReservationPublicView({
         )}
 
         {!limitedPublicView && (
-        <section
-          className={`mobile-section reservation-members-section ${
-            !authUser &&
-            (view === "login" ||
-              view === "register" ||
-              view === "recover-password")
-              ? "with-auth-panel"
-              : ""
-          }`}
-        >
-          <div className="mobile-section-head">
-            <h2>Integrantes del {detailLabel}</h2>
-            <span>
-              {memberIds.length}
-              {capacity > 0 ? `/${capacity}` : ""} personas
-            </span>
-          </div>
-
-          {canJoin && (
-            <div className="reservation-join-card">
-              <span aria-hidden="true">
-                <ReservationIcon name="plus" />
+          <section
+            className={`mobile-section reservation-members-section ${
+              !authUser &&
+              (view === "login" ||
+                view === "register" ||
+                view === "recover-password")
+                ? "with-auth-panel"
+                : ""
+            }`}
+          >
+            <div className="mobile-section-head">
+              <h2>Integrantes de {detailLabel}</h2>
+              <span>
+                {memberIds.length}
+                {capacity > 0 ? `/${capacity}` : ""} personas
               </span>
-              <div>
-                <strong>¿Quieres unirte?</strong>
-                <p>
-                  Puedes agregarte como integrante. El anfitrión también cuenta
-                  dentro del cupo.
-                </p>
-                <em>
-                  {availableSpots === null
-                    ? "Cupo disponible"
-                    : `${availableSpots} ${
-                        availableSpots === 1
-                          ? "lugar disponible"
-                          : "lugares disponibles"
-                      }`}
-                </em>
-              </div>
-              <button
-                className="primary-button compact"
-                type="button"
-                onClick={joinCurrentReservation}
-                disabled={reservationActionLoading === "joining"}
-              >
-                {reservationActionLoading === "joining"
-                  ? "Uniendo..."
-                  : "Unirme"}
-              </button>
             </div>
-          )}
-          {!pendingPaymentRequest && planJoinMessage && (
-            <StatusNote message={planJoinMessage} flowStatus={flowStatus} />
-          )}
 
-          {!authUser && (
-            <div className="reservation-join-card">
-              <span aria-hidden="true">
-                <ReservationIcon name="user" />
-              </span>
-              <div>
-                <strong>Inicia sesión para unirte</strong>
-                <p>
-                  Necesitamos tu cuenta Pul para validar cupo en tiempo real.
-                </p>
+            {canJoin && (
+              <div className="reservation-join-card">
+                <span aria-hidden="true">
+                  <ReservationIcon name="plus" />
+                </span>
+                <div>
+                  <strong>¿Quieres unirte?</strong>
+                  <p>
+                    Puedes agregarte como integrante. El anfitrión también
+                    cuenta dentro del cupo.
+                  </p>
+                  <em>
+                    {availableSpots === null
+                      ? "Cupo disponible"
+                      : `${availableSpots} ${
+                          availableSpots === 1
+                            ? "lugar disponible"
+                            : "lugares disponibles"
+                        }`}
+                  </em>
+                </div>
+                <button
+                  className="primary-button compact"
+                  type="button"
+                  onClick={joinCurrentReservation}
+                  disabled={reservationActionLoading === "joining"}
+                >
+                  {reservationActionLoading === "joining"
+                    ? "Uniendo..."
+                    : "Unirme"}
+                </button>
               </div>
-              <button
-                className="primary-button compact"
-                type="button"
-                onClick={() => setView("login")}
-              >
-                Entrar
-              </button>
+            )}
+            {!pendingPaymentRequest && planJoinMessage && (
+              <StatusNote message={planJoinMessage} flowStatus={flowStatus} />
+            )}
+
+            {!authUser && (
+              <div className="reservation-join-card">
+                <span aria-hidden="true">
+                  <ReservationIcon name="user" />
+                </span>
+                <div>
+                  <strong>Inicia sesión para unirte</strong>
+                  <p>
+                    Necesitamos tu cuenta Pul para validar cupo en tiempo real.
+                  </p>
+                </div>
+                <button
+                  className="primary-button compact"
+                  type="button"
+                  onClick={() => setView("login")}
+                >
+                  Entrar
+                </button>
+              </div>
+            )}
+
+            <div className="reservation-members-grid">
+              {visibleMembers.map((member) => (
+                <div className="reservation-member" key={member.id}>
+                  <img src={member.imagen || defaultAvatar} alt="" />
+                  <span>{member.nombre}</span>
+                  <em className={`reservation-member-badge ${member.role}`}>
+                    {member.role === "payer"
+                      ? "Pagador"
+                      : member.role === "pending"
+                        ? "Pendiente"
+                        : "Invitado"}
+                  </em>
+                </div>
+              ))}
             </div>
-          )}
-
-          <div className="reservation-members-grid">
-            {visibleMembers.map((member) => (
-              <div className="reservation-member" key={member.id}>
-                <img src={member.imagen || defaultAvatar} alt="" />
-                <span>{member.nombre}</span>
-                <em className={`reservation-member-badge ${member.role}`}>
-                  {member.role === "payer"
-                    ? "Pagador"
-                    : member.role === "pending"
-                      ? "Pendiente"
-                      : "Invitado"}
-                </em>
-              </div>
-            ))}
-          </div>
-          {members.length > visibleMembers.length && (
-            <p className="mobile-muted">
-              Mostrando 20 de {members.length} integrantes.
-            </p>
-          )}
-        </section>
+            {members.length > visibleMembers.length && (
+              <p className="mobile-muted">
+                Mostrando 20 de {members.length} integrantes.
+              </p>
+            )}
+          </section>
         )}
 
         {!authUser &&
           (view === "login" ||
             view === "register" ||
             view === "recover-password") && (
-          <div className="reservation-auth-desktop-slot">
-            <ReservationAuthPanel
-              view={view}
-              setView={setView}
-              errors={errors}
-              registerForm={registerForm}
-              loginForm={loginForm}
-              passwordResetForm={passwordResetForm}
-              onRegisterFieldChange={onRegisterFieldChange}
-              onLoginFieldChange={onLoginFieldChange}
-              onPasswordResetFieldChange={onPasswordResetFieldChange}
-              onRegisterSubmit={onRegisterSubmit}
-              onLoginSubmit={onLoginSubmit}
-              onPasswordResetSubmit={onPasswordResetSubmit}
-              flowStatus={flowStatus}
-            />
-          </div>
-        )}
+            <div className="reservation-auth-desktop-slot">
+              <ReservationAuthPanel
+                view={view}
+                setView={setView}
+                errors={errors}
+                registerForm={registerForm}
+                loginForm={loginForm}
+                passwordResetForm={passwordResetForm}
+                onRegisterFieldChange={onRegisterFieldChange}
+                onLoginFieldChange={onLoginFieldChange}
+                onPasswordResetFieldChange={onPasswordResetFieldChange}
+                onRegisterSubmit={onRegisterSubmit}
+                onLoginSubmit={onLoginSubmit}
+                onPasswordResetSubmit={onPasswordResetSubmit}
+                flowStatus={flowStatus}
+              />
+            </div>
+          )}
 
         {!limitedPublicView && (
-        <section className="mobile-card-grid reservation-info-grid">
-          <InfoRow icon="users" label="Personas">
-            {capacity || "Por confirmar"}
-            {mesa.zona ? ` · ${mesa.zona}` : ""}
-          </InfoRow>
-          <InfoRow icon="calendar" label="Fecha">
-            {formatInviteDate(invite)}
-          </InfoRow>
-          <InfoRow
-            icon="map"
-            label="Ubicación"
-            action={
-              venue.direccion || invite.address ? (
-                <a
-                  className="mobile-map-button"
-                  href={mapUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <ReservationIcon name="map" />
-                  Ver en mapa
-                </a>
-              ) : null
-            }
-          >
-            {venue.direccion || invite.address || "Por confirmar"}
-          </InfoRow>
-          {hasVisibleMesa && (
+          <section className="mobile-card-grid reservation-info-grid">
+            <InfoRow icon="users" label="Personas">
+              {capacity || "Por confirmar"}
+              {mesa.zona ? ` · ${mesa.zona}` : ""}
+            </InfoRow>
+            <InfoRow icon="calendar" label="Fecha">
+              {formatInviteDate(invite)}
+            </InfoRow>
             <InfoRow
-              icon="table"
-              label="Mesa"
+              icon="map"
+              label="Ubicación"
               action={
-                <button
-                  className="mobile-map-button"
-                  type="button"
-                  onClick={() => setMesaDetailOpen(true)}
-                >
-                  Detalle
-                </button>
+                venue.direccion || invite.address ? (
+                  <a
+                    className="mobile-map-button"
+                    href={mapUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <ReservationIcon name="map" />
+                    Ver en mapa
+                  </a>
+                ) : null
               }
             >
-              {mesa.nombre || mesa.zona || `Mesa ${mesa.noMesa || ""}`.trim()}
+              {venue.direccion || invite.address || "Por confirmar"}
             </InfoRow>
-          )}
-        </section>
+            {hasVisibleMesa && (
+              <InfoRow
+                icon="table"
+                label="Mesa"
+                action={
+                  <button
+                    className="mobile-map-button"
+                    type="button"
+                    onClick={() => setMesaDetailOpen(true)}
+                  >
+                    Detalle
+                  </button>
+                }
+              >
+                {mesa.nombre || mesa.zona || `Mesa ${mesa.noMesa || ""}`.trim()}
+              </InfoRow>
+            )}
+          </section>
         )}
 
         {!limitedPublicView && (
-        <section className="mobile-section reservation-products-section">
-          <div className="mobile-section-head">
-            <h2>Productos</h2>
-            {individualSummary && (
-              <div className="reservation-account-switch" aria-label="Cuenta">
-                <button
-                  className={accountMode === "general" ? "active" : ""}
-                  type="button"
-                  onClick={() => setAccountMode("general")}
-                >
-                  General
-                </button>
-                <button
-                  className={accountMode === "individual" ? "active" : ""}
-                  type="button"
-                  onClick={() => setAccountMode("individual")}
-                >
-                  Individual
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="reservation-products-list">
-            {visibleProducts.length ? (
-              visibleProducts.map((product, index) => (
-                <ReservationProductCard
-                  key={getProductKey(product, index)}
-                  product={product}
-                  onOpen={() => setSelectedProduct(product)}
-                />
-              ))
-            ) : (
-              <p className="mobile-muted">No hay productos registrados.</p>
-            )}
-          </div>
-        </section>
+          <section className="mobile-section reservation-products-section">
+            <div className="mobile-section-head">
+              <h2>Productos</h2>
+              {individualSummary && (
+                <div className="reservation-account-switch" aria-label="Cuenta">
+                  <button
+                    className={accountMode === "general" ? "active" : ""}
+                    type="button"
+                    onClick={() => setAccountMode("general")}
+                  >
+                    General
+                  </button>
+                  <button
+                    className={accountMode === "individual" ? "active" : ""}
+                    type="button"
+                    onClick={() => setAccountMode("individual")}
+                  >
+                    Individual
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="reservation-products-list">
+              {visibleProducts.length ? (
+                visibleProducts.map((product, index) => (
+                  <ReservationProductCard
+                    key={getProductKey(product, index)}
+                    product={product}
+                    onOpen={() => setSelectedProduct(product)}
+                  />
+                ))
+              ) : (
+                <p className="mobile-muted">No hay productos registrados.</p>
+              )}
+            </div>
+          </section>
         )}
 
         {!limitedPublicView && (
-        <section className="mobile-summary-card">
-          {/* <div className="mobile-section-head">
+          <section className="mobile-summary-card">
+            {/* <div className="mobile-section-head">
           <h2>Resumen</h2>
           <span>{reservation.status || "activa"}</span>
         </div> */}
-          <div className="mobile-total-row">
-            <span>Subtotal</span>
-            <strong>
-              {formatCurrency(getAccountAmount(summaryAccount, "subtotal"))}
-            </strong>
-          </div>
-          <div className="mobile-total-row">
-            <span>Propina</span>
-            <strong>
-              {formatCurrency(getAccountAmount(summaryAccount, "propina"))}
-            </strong>
-          </div>
-          <div className="mobile-total-row">
-            <span>Comisión Stripe</span>
-            <strong>
-              {formatCurrency(
-                getAccountAmount(summaryAccount, "comisionStripe"),
-              )}
-            </strong>
-          </div>
-          <div className="mobile-total-row grand">
-            <span>Total</span>
-            <strong>
-              {formatCurrency(getAccountAmount(summaryAccount, "total"))}
-            </strong>
-          </div>
-        </section>
+            <div className="mobile-total-row">
+              <span>Subtotal</span>
+              <strong>
+                {formatCurrency(getAccountAmount(summaryAccount, "subtotal"))}
+              </strong>
+            </div>
+            <div className="mobile-total-row">
+              <span>Propina</span>
+              <strong>
+                {formatCurrency(getAccountAmount(summaryAccount, "propina"))}
+              </strong>
+            </div>
+            <div className="mobile-total-row">
+              <span>Comisión Stripe</span>
+              <strong>
+                {formatCurrency(
+                  getAccountAmount(summaryAccount, "comisionStripe"),
+                )}
+              </strong>
+            </div>
+            <div className="mobile-total-row grand">
+              <span>Total</span>
+              <strong>
+                {formatCurrency(getAccountAmount(summaryAccount, "total"))}
+              </strong>
+            </div>
+          </section>
         )}
 
         {/* {authUser && !pendingPaymentRequest && (
@@ -1188,7 +1191,7 @@ export function ReservationPublicView({
   );
 }
 
-export function EventPublicView({
+export function LegacyEventPublicView({
   invite,
   authUser,
   eventAttendees,
@@ -1521,6 +1524,678 @@ export function EventPublicView({
           </div>
         </form>
       )}
+    </main>
+  );
+}
+
+export function EventPublicView({
+  invite,
+  authUser,
+  eventAttendees,
+  eventAttendeesHasMore,
+  eventAttendeesLoading,
+  loadMoreEventAttendees,
+  view,
+  setView,
+  selectedItem,
+  setSelectedItemId,
+  quantity,
+  setQuantity,
+  guestForm,
+  onGuestFieldChange,
+  errors,
+  guestTotal,
+  buyAsGuest,
+  buyAsUser,
+  eventPaymentSession,
+  eventPaymentLoading,
+  cancelEventPayment,
+  confirmEventPayment,
+  registerForm,
+  loginForm,
+  passwordResetForm,
+  onRegisterFieldChange,
+  onLoginFieldChange,
+  onPasswordResetFieldChange,
+  onRegisterSubmit,
+  onLoginSubmit,
+  onPasswordResetSubmit,
+  onLogout,
+  flowStatus,
+}) {
+  const event = invite.raw || {};
+  const images = Array.from(
+    new Set(
+      [invite.image, ...(invite.images || []), event.fotoHome].filter(Boolean),
+    ),
+  );
+  const [activeImage, setActiveImage] = useState(0);
+  const [selectedTable, setSelectedTable] = useState(null);
+  const [attendeesModalOpen, setAttendeesModalOpen] = useState(false);
+  const [activeInfoTab, setActiveInfoTab] = useState("description");
+  const attendeesCount =
+    event.integrantesCount ||
+    event.integrantesIds?.length ||
+    eventAttendees.length ||
+    0;
+  const tickets = (invite.tickets || []).filter(
+    (ticket) => Number(ticket?.available ?? 0) > 0,
+  );
+  const tables = (invite.tables || []).filter(
+    (table) => Number(table?.available ?? 0) > 0,
+  );
+  const scheduleItems = String(invite.schedule || "")
+    .split(/\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const selectedItemType = selectedItem?.type === "table" ? "Mesa" : "Boleto";
+  const mapQuery = encodeURIComponent(invite.address || invite.title || "Pul");
+  const mapUrl = /iPad|iPhone|Macintosh/.test(navigator.userAgent)
+    ? `https://maps.apple.com/?q=${mapQuery}`
+    : `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
+  const activeImageUrl = images[activeImage] || "";
+  const canDecreaseQuantity = selectedItem?.type !== "table" && quantity > 1;
+  const maxQuantity =
+    selectedItem?.type === "table"
+      ? Number(selectedItem.capacity || 1)
+      : Math.max(Number(selectedItem?.available || 10), 1);
+  const selectedItemAvailable = Boolean(
+    selectedItem && Number(selectedItem.available ?? 0) > 0,
+  );
+  const visibleEventAttendees = eventAttendees.slice(0, 10);
+  const hasMoreAttendees =
+    attendeesCount > visibleEventAttendees.length ||
+    eventAttendees.length > visibleEventAttendees.length ||
+    eventAttendeesHasMore;
+
+  const moveImage = (direction) => {
+    if (!images.length) return;
+    setActiveImage(
+      (current) => (current + direction + images.length) % images.length,
+    );
+  };
+
+  const eventInfoTabs = [
+    { id: "description", label: "Descripción" },
+    { id: "schedule", label: "Cronograma" },
+    { id: "details", label: "Detalles" },
+  ];
+
+  return (
+    <main className="event-web-shell">
+      <nav className="plan-web-topbar" aria-label="Evento">
+        <button
+          className="round-icon-button"
+          type="button"
+          onClick={() => window.location.assign("/")}
+          aria-label="Volver"
+        >
+          ←
+        </button>
+        <img src={logo} alt="Pul" className="brand-logo" />
+        <button
+          className="ghost-button compact"
+          type="button"
+          onClick={() => setView("event-checkout")}
+        >
+          Comprar
+        </button>
+      </nav>
+
+      <section className="event-web-hero">
+        <div
+          className="event-web-slider"
+          onTouchStart={(eventTouch) => {
+            eventTouch.currentTarget.dataset.startX =
+              eventTouch.touches[0]?.clientX || 0;
+          }}
+          onTouchEnd={(eventTouch) => {
+            const startX = Number(eventTouch.currentTarget.dataset.startX || 0);
+            const endX = eventTouch.changedTouches[0]?.clientX || 0;
+            if (Math.abs(startX - endX) < 40) return;
+            moveImage(startX > endX ? 1 : -1);
+          }}
+        >
+          {activeImageUrl ? (
+            <img
+              src={activeImageUrl}
+              alt=""
+              loading={activeImage === 0 ? "eager" : "lazy"}
+              decoding="async"
+            />
+          ) : (
+            <div className="event-image-placeholder">Pul</div>
+          )}
+          {images.length > 1 && (
+            <>
+              <button
+                className="event-slider-arrow left"
+                type="button"
+                onClick={() => moveImage(-1)}
+                aria-label="Imagen anterior"
+              >
+                ‹
+              </button>
+              <button
+                className="event-slider-arrow right"
+                type="button"
+                onClick={() => moveImage(1)}
+                aria-label="Imagen siguiente"
+              >
+                ›
+              </button>
+              <div className="event-slider-dots">
+                {images.map((image, index) => (
+                  <button
+                    className={index === activeImage ? "active" : ""}
+                    type="button"
+                    key={`${image}-${index}`}
+                    onClick={() => setActiveImage(index)}
+                    aria-label={`Ver imagen ${index + 1}`}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+          <span className="event-attendees-badge">
+            {attendeesCount} asistirán
+          </span>
+        </div>
+
+        <article className="event-web-summary">
+          <p className="eyebrow">Evento</p>
+          <h1>{invite.title}</h1>
+          <div className="event-web-info-grid">
+            <InfoRow icon="user" label="Organizador">
+              {invite.host || event.nombreNegocio || "Pul"}
+            </InfoRow>
+            <InfoRow icon="calendar" label="Inicio">
+              {formatInviteDate({ ...invite, endDate: "", endTime: "" })}
+            </InfoRow>
+            <InfoRow icon="calendar" label="Finaliza">
+              {invite.endDate || invite.endTime
+                ? formatInviteDate({
+                    ...invite,
+                    date: invite.endDate,
+                    time: invite.endTime,
+                  })
+                : "Por confirmar"}
+            </InfoRow>
+            <InfoRow
+              icon="map"
+              label="Dirección"
+              action={
+                invite.address ? (
+                  <a
+                    className="mobile-map-button"
+                    href={mapUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <ReservationIcon name="map" />
+                    Ver en mapa
+                  </a>
+                ) : null
+              }
+            >
+              {invite.address || "Por confirmar"}
+            </InfoRow>
+          </div>
+        </article>
+      </section>
+
+      <section className="event-web-sections">
+        <article className="event-web-section event-info-tabs-card">
+          <div
+            className="event-info-tabs"
+            role="tablist"
+            aria-label="Información del evento"
+          >
+            {eventInfoTabs.map((tab) => (
+              <button
+                className={activeInfoTab === tab.id ? "active" : ""}
+                type="button"
+                role="tab"
+                aria-selected={activeInfoTab === tab.id}
+                key={tab.id}
+                onClick={() => setActiveInfoTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="event-info-tab-panel">
+            {activeInfoTab === "description" && (
+              <p>{invite.description || "No hay descripción disponible."}</p>
+            )}
+            {activeInfoTab === "schedule" &&
+              (scheduleItems.length ? (
+                <div className="event-schedule-list">
+                  {scheduleItems.map((item, index) => (
+                    <div
+                      className="event-schedule-item"
+                      key={`${item}-${index}`}
+                    >
+                      <span>{String(index + 1).padStart(2, "0")}</span>
+                      <p>{item}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p>No hay cronograma disponible.</p>
+              ))}
+            {activeInfoTab === "details" && (
+              <div className="mobile-copy-stack">
+                <strong>Especificaciones del evento</strong>
+                <p>
+                  {invite.details || "No hay especificaciones disponibles."}
+                </p>
+                <strong>Reglas del evento</strong>
+                <p>{invite.rules || "No hay reglas disponibles."}</p>
+              </div>
+            )}
+          </div>
+        </article>
+
+        <article className="event-web-section event-auth-section">
+          {authUser ? (
+            <>
+              <div className="event-account-head">
+                <span className="plan-web-icon" aria-hidden="true">
+                  <ReservationIcon name="user" />
+                </span>
+              </div>
+              <ReservationCapacityCounter
+                memberCount={attendeesCount}
+                capacity={invite.capacity || 0}
+                availableSpots={null}
+              />
+              <div className="reservation-current-user event-current-user">
+                <img
+                  src={authUser.imagen || authUser.photoURL || defaultAvatar}
+                  alt=""
+                />
+                <div>
+                  <span>Sesión iniciada como</span>
+                  <strong>
+                    {authUser.nombre || authUser.displayName || "Usuario Pul"}
+                  </strong>
+                  <p>{authUser.email}</p>
+                </div>
+              </div>
+              <p className="event-account-note">
+                Tu compra se asociará a este perfil y podrás verla en Pul.
+              </p>
+              <button
+                className="text-button reservation-logout-button"
+                type="button"
+                onClick={onLogout}
+              >
+                Cerrar sesión
+              </button>
+            </>
+          ) : view === "login" ||
+            view === "register" ||
+            view === "recover-password" ? (
+            <ReservationAuthPanel
+              view={view}
+              setView={setView}
+              errors={errors}
+              registerForm={registerForm}
+              loginForm={loginForm}
+              passwordResetForm={passwordResetForm}
+              onRegisterFieldChange={onRegisterFieldChange}
+              onLoginFieldChange={onLoginFieldChange}
+              onPasswordResetFieldChange={onPasswordResetFieldChange}
+              onRegisterSubmit={onRegisterSubmit}
+              onLoginSubmit={onLoginSubmit}
+              onPasswordResetSubmit={onPasswordResetSubmit}
+              flowStatus={flowStatus}
+            />
+          ) : (
+            <ReservationAuthPrompt
+              setView={setView}
+              memberCount={attendeesCount}
+              capacity={invite.capacity || 0}
+              availableSpots={null}
+              description="Usa tu cuenta para comprar y consultar tus accesos del evento."
+            />
+          )}
+        </article>
+      </section>
+
+      <section className="event-web-purchase" id="comprar">
+        <div className="mobile-section-head">
+          <h2>Compra de boletos</h2>
+          <span>{selectedItemType} seleccionado</span>
+        </div>
+
+        <div className="event-purchase-grid">
+          <div className="event-option-column">
+            <h3>Tickets</h3>
+            <div className="event-option-list">
+              {tickets.length ? (
+                tickets.map((ticket) => (
+                  <label
+                    className={`event-purchase-option ${
+                      selectedItem?.id === ticket.id ? "selected" : ""
+                    }`}
+                    key={`ticket-${ticket.id}`}
+                  >
+                    <input
+                      type="radio"
+                      name="purchaseItem"
+                      value={ticket.id}
+                      checked={selectedItem?.id === ticket.id}
+                      onChange={() => setSelectedItemId(ticket.id)}
+                    />
+                    <span>Boleto</span>
+                    <strong>{ticket.name}</strong>
+                    {ticket.description && <p>{ticket.description}</p>}
+                    <div>
+                      <em>{formatCurrency(ticket.price)}</em>
+                      <small>{ticket.available} disponibles</small>
+                    </div>
+                  </label>
+                ))
+              ) : (
+                <p className="mobile-muted">No hay tickets disponibles.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="event-option-column">
+            <h3>Mesas</h3>
+            <div className="event-option-list">
+              {tables.length ? (
+                tables.map((table) => (
+                  <label
+                    className={`event-purchase-option ${
+                      selectedItem?.id === table.id ? "selected" : ""
+                    }`}
+                    key={`table-${table.id}`}
+                  >
+                    <input
+                      type="radio"
+                      name="purchaseItem"
+                      value={table.id}
+                      checked={selectedItem?.id === table.id}
+                      onChange={() => {
+                        setSelectedItemId(table.id);
+                        setQuantity(Number(table.capacity || 1));
+                      }}
+                    />
+                    <span>Mesa</span>
+                    <strong>{table.name}</strong>
+                    {table.description && <p>{table.description}</p>}
+                    <div>
+                      <em>{formatCurrency(table.price)}</em>
+                      <small>{table.capacity || 1} personas</small>
+                    </div>
+                    <button
+                      className="text-button compact"
+                      type="button"
+                      onClick={(eventClick) => {
+                        eventClick.preventDefault();
+                        setSelectedTable(table);
+                      }}
+                    >
+                      Ver detalle
+                    </button>
+                  </label>
+                ))
+              ) : (
+                <p className="mobile-muted">No hay mesas disponibles.</p>
+              )}
+            </div>
+          </div>
+
+          <form
+            className="event-checkout-card"
+            onSubmit={buyAsGuest}
+            noValidate
+          >
+            <div className="quantity-row">
+              <span>Cantidad</span>
+              <div>
+                <button
+                  className="stepper-button"
+                  type="button"
+                  onClick={() =>
+                    setQuantity((current) => Math.max(1, current - 1))
+                  }
+                  disabled={!canDecreaseQuantity}
+                >
+                  -
+                </button>
+                <strong>{quantity}</strong>
+                <button
+                  className="stepper-button"
+                  type="button"
+                  onClick={() =>
+                    setQuantity((current) => Math.min(maxQuantity, current + 1))
+                  }
+                  disabled={selectedItem?.type === "table"}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            {!authUser &&
+              view !== "login" &&
+              view !== "register" &&
+              view !== "recover-password" && (
+                <>
+                  <label>
+                    <span>Nombre</span>
+                    <input
+                      name="nombre"
+                      value={guestForm.nombre}
+                      onChange={onGuestFieldChange}
+                      aria-invalid={Boolean(errors.nombre)}
+                    />
+                    {errors.nombre && <small>{errors.nombre}</small>}
+                  </label>
+                  <label>
+                    <span>Email para confirmación</span>
+                    <input
+                      name="email"
+                      type="email"
+                      value={guestForm.email}
+                      onChange={onGuestFieldChange}
+                      aria-invalid={Boolean(errors.email)}
+                    />
+                    {errors.email && <small>{errors.email}</small>}
+                  </label>
+                  <label>
+                    <span>Teléfono opcional</span>
+                    <input
+                      name="telefono"
+                      type="tel"
+                      value={guestForm.telefono}
+                      onChange={onGuestFieldChange}
+                    />
+                  </label>
+                </>
+              )}
+
+            {authUser && (
+              <div className="reservation-current-user event-current-user">
+                <img
+                  src={authUser.imagen || authUser.photoURL || defaultAvatar}
+                  alt=""
+                />
+                <div>
+                  <span>Sesión iniciada como</span>
+                  <strong>
+                    {authUser.nombre || authUser.displayName || "Usuario Pul"}
+                  </strong>
+                  <p>{authUser.email}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="checkout-total">
+              <span>Total con servicio</span>
+              <strong>{formatCurrency(guestTotal)}</strong>
+            </div>
+            <button
+              className="primary-button"
+              type={authUser ? "button" : "submit"}
+              onClick={authUser ? buyAsUser : undefined}
+              disabled={!selectedItemAvailable || flowStatus === "purchasing"}
+            >
+              {flowStatus === "purchasing"
+                ? "Procesando..."
+                : authUser
+                  ? "Comprar con mi cuenta"
+                  : "Comprar como invitado"}
+            </button>
+            {!authUser && (
+              <p className="mobile-muted">
+                Recibirás un código único para asociar este boleto a tu cuenta
+                Pul una sola vez.
+              </p>
+            )}
+          </form>
+        </div>
+      </section>
+
+      {eventAttendees.length > 0 && (
+        <section className="mobile-section event-attendees-section">
+          <div className="plan-web-section-head event-attendees-head">
+            <span className="plan-web-icon" aria-hidden="true">
+              <ReservationIcon name="users" />
+            </span>
+            <h2>Personas que asistirán</h2>
+            <span>{attendeesCount}</span>
+          </div>
+          <div className="reservation-members-grid event-attendees-grid">
+            {visibleEventAttendees.map((attendee) => (
+              <button
+                className="reservation-member event-attendee-card"
+                type="button"
+                key={attendee.id || attendee.email || attendee.nombre}
+                onClick={() => setAttendeesModalOpen(true)}
+              >
+                <img src={attendee.imagen || defaultAvatar} alt="" />
+                <span>{attendee.nombre || "Asistente"}</span>
+                <em className="reservation-member-badge guest">Asistente</em>
+              </button>
+            ))}
+          </div>
+          {hasMoreAttendees && (
+            <button
+              className="ghost-button compact"
+              type="button"
+              onClick={() => setAttendeesModalOpen(true)}
+              disabled={eventAttendeesLoading}
+            >
+              Ver asistentes
+            </button>
+          )}
+        </section>
+      )}
+
+      {attendeesModalOpen && (
+        <div className="reservation-modal-backdrop" role="presentation">
+          <section
+            className="reservation-detail-modal event-attendees-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Asistentes"
+          >
+            <div className="reservation-modal-head">
+              <strong>Asistentes</strong>
+              <button
+                className="round-icon-button"
+                type="button"
+                onClick={() => setAttendeesModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="event-attendees-modal-list">
+              {eventAttendees.map((attendee) => (
+                <div
+                  className="event-attendee-row"
+                  key={attendee.id || attendee.email || attendee.nombre}
+                >
+                  <img src={attendee.imagen || defaultAvatar} alt="" />
+                  <span>{attendee.nombre || "Asistente"}</span>
+                </div>
+              ))}
+            </div>
+            {eventAttendeesHasMore && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={loadMoreEventAttendees}
+                disabled={eventAttendeesLoading}
+              >
+                {eventAttendeesLoading ? "Cargando..." : "Cargar más"}
+              </button>
+            )}
+          </section>
+        </div>
+      )}
+
+      {selectedTable && (
+        <div className="reservation-modal-backdrop" role="presentation">
+          <section
+            className="reservation-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Detalle de mesa"
+          >
+            <div className="reservation-modal-head">
+              <strong>{selectedTable.name}</strong>
+              <button
+                className="round-icon-button"
+                type="button"
+                onClick={() => setSelectedTable(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="reservation-mesa-detail">
+              <InfoRow icon="table" label="Zona">
+                {selectedTable.zone || "Por confirmar"}
+              </InfoRow>
+              <InfoRow icon="users" label="Capacidad">
+                {selectedTable.capacity || 1} personas
+              </InfoRow>
+              <InfoRow icon="table" label="Precio">
+                {formatCurrency(selectedTable.price)}
+              </InfoRow>
+              <p className="mobile-muted">
+                {selectedTable.description ||
+                  "Sin especificaciones adicionales."}
+              </p>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => {
+                  setSelectedItemId(selectedTable.id);
+                  setQuantity(Number(selectedTable.capacity || 1));
+                  setSelectedTable(null);
+                  setView("event-checkout");
+                }}
+              >
+                Seleccionar mesa
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      <ReservationPaymentModal
+        paymentSession={eventPaymentSession}
+        paymentLoading={eventPaymentLoading}
+        authUser={authUser}
+        onCancel={cancelEventPayment}
+        onConfirm={confirmEventPayment}
+      />
     </main>
   );
 }

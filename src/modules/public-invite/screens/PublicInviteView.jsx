@@ -47,6 +47,10 @@ export default function PublicInviteView({
   reservationActionLoading,
   reservationPaymentSession,
   reservationPaymentLoading,
+  eventPaymentSession,
+  eventPaymentLoading,
+  cancelEventPayment,
+  confirmEventPayment,
   cancelReservationPayment,
   confirmReservationPayment,
   onLogout,
@@ -132,6 +136,21 @@ export default function PublicInviteView({
         guestTotal={guestTotal}
         buyAsGuest={buyAsGuest}
         buyAsUser={buyAsUser}
+        eventPaymentSession={eventPaymentSession}
+        eventPaymentLoading={eventPaymentLoading}
+        cancelEventPayment={cancelEventPayment}
+        confirmEventPayment={confirmEventPayment}
+        registerForm={registerForm}
+        loginForm={loginForm}
+        passwordResetForm={passwordResetForm}
+        onRegisterFieldChange={onRegisterFieldChange}
+        onLoginFieldChange={onLoginFieldChange}
+        onPasswordResetFieldChange={onPasswordResetFieldChange}
+        onRegisterSubmit={onRegisterSubmit}
+        onLoginSubmit={onLoginSubmit}
+        onPasswordResetSubmit={onPasswordResetSubmit}
+        onLogout={onLogout}
+        flowStatus={flowStatus}
       />
     );
   }

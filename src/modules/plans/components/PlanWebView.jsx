@@ -567,8 +567,8 @@ export default function PlanWebView({
                   ? "Actualizando..."
                   : effectiveActionText}
               </button>
-              <div className="plan-web-current-user">
-                {/* <UserAvatar user={authUser} /> */}
+              <div className="plan-web-current-user event-current-user">
+                <img src={authUser.imagen || authUser.photoURL || defaultAvatar} alt="" />
                 <div>
                   <span>Sesión iniciada como</span>
                   <strong>
