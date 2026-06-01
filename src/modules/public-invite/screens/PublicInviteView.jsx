@@ -64,6 +64,8 @@ export default function PublicInviteView({
   guestForm,
   onGuestFieldChange,
   errors,
+  guestSubtotal,
+  guestServiceFee,
   guestTotal,
   buyAsGuest,
   buyAsUser,
@@ -133,6 +135,8 @@ export default function PublicInviteView({
         guestForm={guestForm}
         onGuestFieldChange={onGuestFieldChange}
         errors={errors}
+        guestSubtotal={guestSubtotal}
+        guestServiceFee={guestServiceFee}
         guestTotal={guestTotal}
         buyAsGuest={buyAsGuest}
         buyAsUser={buyAsUser}
@@ -760,7 +764,15 @@ export default function PublicInviteView({
               </label>
 
               <div className="checkout-total">
-                <span>Total</span>
+                <span>Subtotal</span>
+                <strong>{formatCurrency(guestSubtotal)}</strong>
+              </div>
+              <div className="checkout-total">
+                <span>Servicio 3.6% + $3</span>
+                <strong>{formatCurrency(guestServiceFee)}</strong>
+              </div>
+              <div className="checkout-total">
+                <span>Total con servicio</span>
                 <strong>{formatCurrency(guestTotal)}</strong>
               </div>
 

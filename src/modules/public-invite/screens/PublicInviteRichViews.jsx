@@ -1208,6 +1208,8 @@ export function LegacyEventPublicView({
   guestForm,
   onGuestFieldChange,
   errors,
+  guestSubtotal,
+  guestServiceFee,
   guestTotal,
   buyAsGuest,
   buyAsUser,
@@ -1503,7 +1505,15 @@ export function LegacyEventPublicView({
               </>
             )}
             <div className="checkout-total">
-              <span>Total</span>
+              <span>Subtotal</span>
+              <strong>{formatCurrency(guestSubtotal)}</strong>
+            </div>
+            <div className="checkout-total">
+              <span>Servicio 3.6% + $3</span>
+              <strong>{formatCurrency(guestServiceFee)}</strong>
+            </div>
+            <div className="checkout-total">
+              <span>Total con servicio</span>
               <strong>{formatCurrency(guestTotal)}</strong>
             </div>
             <button
@@ -1544,6 +1554,8 @@ export function EventPublicView({
   guestForm,
   onGuestFieldChange,
   errors,
+  guestSubtotal,
+  guestServiceFee,
   guestTotal,
   buyAsGuest,
   buyAsUser,
@@ -2036,6 +2048,14 @@ export function EventPublicView({
               </div>
             )}
 
+            <div className="checkout-total">
+              <span>Subtotal</span>
+              <strong>{formatCurrency(guestSubtotal)}</strong>
+            </div>
+            <div className="checkout-total">
+              <span>Servicio 3.6% + $3</span>
+              <strong>{formatCurrency(guestServiceFee)}</strong>
+            </div>
             <div className="checkout-total">
               <span>Total con servicio</span>
               <strong>{formatCurrency(guestTotal)}</strong>

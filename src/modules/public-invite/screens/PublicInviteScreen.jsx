@@ -69,6 +69,7 @@ import PublicInviteView from "./PublicInviteView";
 import { fetchEventParticipantsPage } from "../../events/services/eventParticipants.service";
 import {
   buildEventPurchaseDraft,
+  calculateEventPurchaseCuenta,
   commitEventPurchase,
   generateUniqueTicketClaimCode,
 } from "../../events/services/eventPurchase.service";
@@ -847,11 +848,14 @@ function PublicInviteScreen() {
   const selectedItem =
     purchasableItems.find((item) => item.id === selectedItemId) ||
     purchasableItems[0];
-  const guestTotal = selectedItem
+  const guestSubtotal = selectedItem
     ? selectedItem.type === "table"
       ? selectedItem.price
       : selectedItem.price * quantity
     : 0;
+  const guestCuenta = calculateEventPurchaseCuenta(guestSubtotal);
+  const guestServiceFee = guestCuenta.comisionStripe;
+  const guestTotal = guestCuenta.total;
   const spotsLeft =
     invite.capacity > 0 ? Math.max(invite.capacity - invite.members, 0) : null;
   const heroImage = invite.image || invite.hostImage;
@@ -1245,6 +1249,7 @@ function PublicInviteScreen() {
 
   /** Solicita al backend enviar confirmacion de compra y QR al correo del comprador. */
   const sendTicketEmail = async (purchase) => {
+    if (!EMAIL_CONFIRMATION_ENDPOINT || !purchase?.buyer?.email) return;
     await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
       to: purchase.buyer.email,
       template: "event-ticket-confirmation",
@@ -1427,7 +1432,12 @@ function PublicInviteScreen() {
         ticketClaimCode,
         paymentIntentId: result?.paymentIntentId || result?.idPago || "",
       });
-      await sendTicketEmail(purchase);
+      await sendTicketEmail(purchase).catch((error) => {
+        console.warn(
+          `${DEBUG_PREFIX} Compra registrada, pero no se pudo enviar el correo`,
+          error,
+        );
+      });
       sessionStorage.setItem(
         `pulEventPurchase:${invite.id}`,
         JSON.stringify(purchase),
@@ -1960,6 +1970,8 @@ function PublicInviteScreen() {
       guestForm={guestForm}
       onGuestFieldChange={onGuestFieldChange}
       errors={errors}
+      guestSubtotal={guestSubtotal}
+      guestServiceFee={guestServiceFee}
       guestTotal={guestTotal}
       buyAsGuest={buyAsGuest}
       buyAsUser={buyAsUser}

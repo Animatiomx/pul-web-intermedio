@@ -4,7 +4,6 @@ import {
   getDoc,
   runTransaction,
   serverTimestamp,
-  setDoc,
 } from "firebase/firestore";
 import { db } from "../../../firebase";
 import { getUserId } from "../../../shared/utils/users";
@@ -244,6 +243,11 @@ export async function commitEventPurchase({
   const eventRef = doc(db, "eventos", eventId);
   const memberId =
     getUserId(buyer) || (ticketClaimCode ? `guest-${ticketClaimCode}` : "");
+  const isGuestPurchase = buyer?.method === "guest";
+  const shouldRegisterMember = Boolean(memberId && !isGuestPurchase);
+  const eventMemberRef = shouldRegisterMember
+    ? doc(db, "eventos", eventId, "integrantes", memberId)
+    : null;
   const purchase = buildEventPurchaseDraft({
     event,
     buyer,
@@ -259,6 +263,9 @@ export async function commitEventPurchase({
   await runTransaction(db, async (transaction) => {
     const eventSnap = await transaction.get(eventRef);
     const claimSnap = claimRef ? await transaction.get(claimRef) : null;
+    const eventMemberSnap = eventMemberRef
+      ? await transaction.get(eventMemberRef)
+      : null;
     if (!eventSnap.exists()) throw new Error("El evento ya no existe.");
     if (claimSnap?.exists()) {
       throw new Error("El identificador de boleto ya existe. Intenta de nuevo.");
@@ -266,9 +273,14 @@ export async function commitEventPurchase({
 
     const eventData = eventSnap.data();
     const normalizedQuantity = Number(purchase.eventPurchase.quantity || 1);
-    const nextEventParticipantIds = Array.from(
-      new Set([...(eventData.integrantesIds || []), memberId].filter(Boolean)),
-    );
+    const currentEventParticipantIds = Array.isArray(eventData.integrantesIds)
+      ? eventData.integrantesIds
+      : [];
+    const nextEventParticipantIds = shouldRegisterMember
+      ? Array.from(
+          new Set([...currentEventParticipantIds, memberId].filter(Boolean)),
+        )
+      : currentEventParticipantIds;
 
     if (type === "ticket") {
       const ticketId = getItemId(item);
@@ -302,10 +314,15 @@ export async function commitEventPurchase({
       transaction.update(eventRef, { mesas, updatedAt: serverTimestamp() });
     }
 
-    if (memberId) {
+    if (shouldRegisterMember) {
+      const currentIntegrantesCount = Number(
+        eventData.integrantesCount ?? currentEventParticipantIds.length ?? 0,
+      );
       transaction.update(eventRef, {
         integrantesIds: nextEventParticipantIds,
-        integrantesCount: nextEventParticipantIds.length,
+        integrantesCount: eventMemberSnap?.exists()
+          ? currentIntegrantesCount
+          : currentIntegrantesCount + 1,
         updatedAt: serverTimestamp(),
       });
     }
@@ -325,20 +342,20 @@ export async function commitEventPurchase({
         createdAt: serverTimestamp(),
       });
     }
-  });
 
-  if (memberId) {
-    await setDoc(
-      doc(db, "eventos", eventId, "integrantes", memberId),
-      {
-        ...purchase.integrantes[0],
-        purchaseId: purchaseRef.id,
-        eventId,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
-  }
+    if (eventMemberRef) {
+      transaction.set(
+        eventMemberRef,
+        {
+          ...purchase.integrantes[0],
+          purchaseId: purchaseRef.id,
+          eventId,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+  });
 
   return purchase;
 }
@@ -351,7 +368,6 @@ export async function redeemTicketClaimCode(code, user) {
   }
 
   const claimRef = doc(db, "ticketClaims", normalizedCode);
-  let claimedEventId = "";
 
   await runTransaction(db, async (transaction) => {
     const claimSnap = await transaction.get(claimRef);
@@ -366,12 +382,19 @@ export async function redeemTicketClaimCode(code, user) {
     if (!claim.purchaseId || !claim.eventId) {
       throw new Error("El identificador no pertenece a un boleto válido.");
     }
-    claimedEventId = claim.eventId;
 
     const purchaseRef = doc(db, "eventosUsers", claim.purchaseId);
     const eventRef = doc(db, "eventos", claim.eventId);
+    const eventMemberRef = doc(
+      db,
+      "eventos",
+      claim.eventId,
+      "integrantes",
+      userId,
+    );
     const purchaseSnap = await transaction.get(purchaseRef);
     const eventSnap = await transaction.get(eventRef);
+    const eventMemberSnap = await transaction.get(eventMemberRef);
     if (!purchaseSnap.exists()) {
       throw new Error("El boleto asociado ya no existe.");
     }
@@ -423,25 +446,35 @@ export async function redeemTicketClaimCode(code, user) {
       usedBy: userId,
       updatedAt: serverTimestamp(),
     });
-    transaction.update(eventRef, {
-      integrantesIds: Array.from(
-        new Set(
-          (eventSnap.data().integrantesIds || [])
-            .filter((id) => id !== previousGuestId)
-            .concat(userId),
-        ),
+    const eventData = eventSnap.data();
+    const currentEventParticipantIds = Array.isArray(eventData.integrantesIds)
+      ? eventData.integrantesIds
+      : [];
+    const nextEventParticipantIds = Array.from(
+      new Set(
+        currentEventParticipantIds
+          .filter((id) => id !== previousGuestId)
+          .concat(userId),
       ),
+    );
+    const currentIntegrantesCount = Number(
+      eventData.integrantesCount ?? currentEventParticipantIds.length ?? 0,
+    );
+    transaction.update(eventRef, {
+      integrantesIds: nextEventParticipantIds,
+      integrantesCount: eventMemberSnap.exists()
+        ? currentIntegrantesCount
+        : currentIntegrantesCount + 1,
       updatedAt: serverTimestamp(),
     });
+    transaction.set(
+      eventMemberRef,
+      {
+        ...buildMember(user, userId),
+        claimCode: normalizedCode,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
   });
-
-  await setDoc(
-    doc(db, "eventos", claimedEventId, "integrantes", userId),
-    {
-      ...buildMember(user, userId),
-      claimCode: normalizedCode,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
 }
