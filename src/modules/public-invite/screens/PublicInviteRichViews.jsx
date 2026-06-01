@@ -18,6 +18,9 @@ import {
   getReservationMemberIds,
 } from "../../reservations/services/reservationParticipation.service";
 
+/**
+ * Iconos locales usados por las vistas ricas sin cargar una libreria extra.
+ */
 function ReservationIcon({ name }) {
   const common = {
     width: "20",
@@ -78,6 +81,9 @@ function ReservationIcon({ name }) {
   return icons[name] || icons.users;
 }
 
+/**
+ * Renderiza pila compacta de avatares para asistentes.
+ */
 function AvatarStack({ users = [], total = 0 }) {
   const visible = users.slice(0, 5);
   const extra = Math.max(0, total - visible.length);
@@ -94,6 +100,9 @@ function AvatarStack({ users = [], total = 0 }) {
   );
 }
 
+/**
+ * Fila semantica de dato + accion opcional en vistas mobile.
+ */
 function InfoRow({ icon, label, children, action }) {
   return (
     <div className="mobile-info-row">
@@ -109,6 +118,9 @@ function InfoRow({ icon, label, children, action }) {
   );
 }
 
+/**
+ * Muestra mensajes de exito/error segun `flowStatus`.
+ */
 function StatusNote({ message, flowStatus }) {
   if (!message) return null;
   const isError = String(flowStatus || "").includes("error");
@@ -120,6 +132,9 @@ function StatusNote({ message, flowStatus }) {
   );
 }
 
+/**
+ * Formulario Stripe PaymentElement para pagos pendientes autenticados.
+ */
 function ReservationPaymentForm({
   amount,
   loading,
@@ -200,6 +215,9 @@ function ReservationPaymentForm({
   );
 }
 
+/**
+ * Modal que inicializa Stripe Elements con el client secret recibido del backend.
+ */
 function ReservationPaymentModal({
   paymentSession,
   paymentLoading,
@@ -265,6 +283,9 @@ function ReservationPaymentModal({
   );
 }
 
+/**
+ * Indicador visual de cupo usado en reservas y eventos.
+ */
 function ReservationCapacityCounter({ memberCount, capacity, availableSpots }) {
   return (
     <div
@@ -282,6 +303,9 @@ function ReservationCapacityCounter({ memberCount, capacity, availableSpots }) {
   );
 }
 
+/**
+ * Panel de login/registro/recuperacion embebido en vistas de reserva/evento.
+ */
 function ReservationAuthPanel({
   view,
   setView,
@@ -495,6 +519,9 @@ function ReservationAuthPanel({
   return null;
 }
 
+/**
+ * CTA para usuarios anonimos antes de permitir acciones que requieren cuenta.
+ */
 function ReservationAuthPrompt({
   setView,
   memberCount,
@@ -539,6 +566,9 @@ function ReservationAuthPrompt({
   );
 }
 
+/**
+ * Genera key estable para productos aunque falte id.
+ */
 function getProductKey(product, index) {
   return (
     product?.id ||
@@ -547,6 +577,9 @@ function getProductKey(product, index) {
   );
 }
 
+/**
+ * Tarjeta de producto consumido dentro del detalle de cuenta.
+ */
 function ReservationProductCard({ product, onOpen }) {
   const quantity = Number(product?.cantidad || 1);
   const name = product?.nombre || "Producto";
@@ -568,10 +601,16 @@ function ReservationProductCard({ product, onOpen }) {
   );
 }
 
+/**
+ * Lee montos tolerando cuenta plana o anidada en `cuenta`.
+ */
 function getAccountAmount(account, key) {
   return Number(account?.[key] ?? account?.cuenta?.[key] ?? 0);
 }
 
+/**
+ * Decide si mostrar cuenta en curso o cuenta general.
+ */
 function getReservationSummaryAccount(reservation) {
   const currentAccount = reservation.cuentaCurso || {};
   const generalAccount = reservation.cuenta || {};
@@ -582,6 +621,9 @@ function getReservationSummaryAccount(reservation) {
   return generalAccount;
 }
 
+/**
+ * Clasifica integrante como pagado, pendiente o invitado para badges visuales.
+ */
 function getMemberRole(member, reservation) {
   const memberId = member?.id || "";
   const payerIds = new Set(
@@ -601,6 +643,13 @@ function getMemberRole(member, reservation) {
   return "guest";
 }
 
+/**
+ * Vista rica de reservacion y detalle de evento comprado.
+ *
+ * Recibe datos normalizados por `invite.service`, estado de auth y handlers del
+ * orquestador. Renderiza cuenta, integrantes, productos, pagos pendientes y
+ * acciones de unirse/pagar/rechazar sin escribir directamente en Firestore.
+ */
 export function ReservationPublicView({
   invite,
   isEventDetail = false,
@@ -1191,6 +1240,9 @@ export function ReservationPublicView({
   );
 }
 
+/**
+ * Vista legacy de evento conservada como fallback.
+ */
 export function LegacyEventPublicView({
   invite,
   authUser,
@@ -1538,6 +1590,13 @@ export function LegacyEventPublicView({
   );
 }
 
+/**
+ * Vista publica principal de evento.
+ *
+ * Muestra imagenes, informacion, asistentes y compra de boletos/mesas. Para
+ * invitados dispara Stripe Checkout; para usuarios autenticados abre PaymentElement
+ * mediante handlers recibidos de `PublicInviteScreen`.
+ */
 export function EventPublicView({
   invite,
   authUser,

@@ -14,7 +14,11 @@ export async function postJson(endpoint, payload) {
     let message = `Request failed with ${response.status}`;
     try {
       const errorPayload = await response.json();
-      message = errorPayload?.message || message;
+      message =
+        errorPayload?.message ||
+        errorPayload?.msg ||
+        errorPayload?.error?.message ||
+        message;
     } catch {
       // Keep the generic status error if the backend did not return JSON.
     }

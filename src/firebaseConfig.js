@@ -1,3 +1,10 @@
+/**
+ * Configuracion publica de Firebase.
+ *
+ * En produccion debe venir de variables `VITE_FIREBASE_*`. Los valores fallback
+ * permiten que la app siga funcionando en entornos donde no hay `.env`, pero no
+ * deben considerarse secretos: son identificadores publicos del cliente web.
+ */
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'REDACTED_CREDENTIAL_09d5e8ea',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'pul-33698.firebaseapp.com',

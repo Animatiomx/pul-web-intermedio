@@ -11,6 +11,9 @@ import { getUserId } from "../../../shared/utils/users";
 const CLAIM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CLAIM_LENGTH = 10;
 
+/**
+ * Genera un indice aleatorio compatible con browsers con o sin Web Crypto.
+ */
 function getRandomInt(max) {
   if (globalThis.crypto?.getRandomValues) {
     const value = new Uint32Array(1);
@@ -26,6 +29,13 @@ export function generateTicketClaimCode() {
   ).join("");
 }
 
+/**
+ * Genera un codigo unico consultando `ticketClaims`.
+ *
+ * Requiere permisos de lectura en Firestore, por eso solo debe usarse en flujos
+ * autenticados o administrativos. La compra invitada genera el codigo localmente
+ * y deja que el backend valide unicidad al registrar despues del pago.
+ */
 export async function generateUniqueTicketClaimCode() {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const code = generateTicketClaimCode();
@@ -59,6 +69,10 @@ function eventCoordinates(event) {
   return [];
 }
 
+/**
+ * Convierte el evento completo a una copia estable para guardar en `eventosUsers`.
+ * Esto evita que una compra historica dependa de cambios posteriores del evento.
+ */
 function buildEventSnapshot(event) {
   return {
     id: event.id,
@@ -93,6 +107,9 @@ function buildMember(buyer, fallbackId) {
   };
 }
 
+/**
+ * Calcula el importe base del producto comprado antes de comision Stripe.
+ */
 function getItemAmount(type, item, quantity) {
   const raw = item?.raw || item || {};
   if (type === "zona") return Number(item?.price ?? raw.costoMesa ?? 0);
@@ -104,6 +121,9 @@ function getItemId(item) {
   return raw.id || raw.idAlternativo || raw.noMesa || item?.id || item?.name || "";
 }
 
+/**
+ * Normaliza un boleto seleccionado al formato persistido en `eventosUsers`.
+ */
 function getTicketPayload(item, quantity) {
   const raw = item?.raw || item || {};
   return {
@@ -115,6 +135,9 @@ function getTicketPayload(item, quantity) {
   };
 }
 
+/**
+ * Normaliza una mesa/zona seleccionada al formato persistido en `eventosUsers`.
+ */
 function getMesaPayload(item) {
   const raw = item?.raw || item || {};
   return {
@@ -127,6 +150,14 @@ function getMesaPayload(item) {
   };
 }
 
+/**
+ * Construye el documento completo de compra de evento antes de persistirlo.
+ *
+ * El resultado se usa tanto para compras autenticadas como para compras invitadas
+ * registradas por backend. Mantiene el contrato legacy de `reservaciones`:
+ * `cuenta`, `payers`, `integrantes`, `integrantesDivers`, `eventPurchase` y
+ * `idPagos`.
+ */
 export function buildEventPurchaseDraft({
   event,
   buyer,
@@ -232,6 +263,13 @@ export function buildEventPurchaseDraft({
   };
 }
 
+/**
+ * Persiste una compra autenticada de evento desde el cliente.
+ *
+ * Valida existencia, disponibilidad y claim code en una transaccion. Para
+ * invitados el registro final debe hacerse en backend; esta funcion se conserva
+ * para usuarios autenticados y fallback de desarrollo.
+ */
 export async function commitEventPurchase({
   event,
   buyer,
@@ -288,6 +326,8 @@ export async function commitEventPurchase({
         )
       : currentEventParticipantIds;
 
+    // Disponibilidad y documento de compra se actualizan en la misma transaccion
+    // para no vender mas boletos o mesas de las disponibles.
     if (type === "ticket") {
       const ticketId = getItemId(item);
       let foundTicket = false;
@@ -320,6 +360,8 @@ export async function commitEventPurchase({
       transaction.update(eventRef, { mesas, updatedAt: serverTimestamp() });
     }
 
+    // Invitados no aparecen como asistentes del evento hasta reclamar su boleto.
+    // Usuarios autenticados si se reflejan en subcoleccion y contador.
     if (shouldRegisterMember) {
       const currentIntegrantesCount = Number(
         eventData.integrantesCount ?? currentEventParticipantIds.length ?? 0,
@@ -366,6 +408,13 @@ export async function commitEventPurchase({
   return purchase;
 }
 
+/**
+ * Asocia un boleto comprado como invitado a una cuenta Pul.
+ *
+ * Cambia el owner del documento `eventosUsers`, marca `ticketClaims/{code}` como
+ * usado y crea/actualiza `eventos/{eventId}/integrantes/{userId}`. Solo suma
+ * `integrantesCount` si el integrante no existia previamente.
+ */
 export async function redeemTicketClaimCode(code, user) {
   const normalizedCode = String(code || "").trim().toUpperCase();
   const userId = getUserId(user);

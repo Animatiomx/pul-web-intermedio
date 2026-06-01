@@ -3,6 +3,17 @@ import {
   PUBLIC_INVITE_ENDPOINT,
 } from "../../../shared/constants/appConfig";
 import { getUniqueIds, normalizeUserSummary } from "../../../shared/utils/users";
+
+/**
+ * Adaptador de invitaciones publicas.
+ *
+ * El backend puede entregar documentos Firestore REST o JSON normal. Este
+ * servicio reduce planes, reservas, eventos y compras de evento a un contrato
+ * unico consumido por `PublicInviteScreen` y sus vistas. Cualquier campo nuevo
+ * de Firestore debe mapearse aqui antes de llegar a UI para evitar condicionales
+ * duplicadas en componentes.
+ */
+
 /**
  * Detecta si el enlace publico corresponde a plan, reserva, evento o detalle.
  */

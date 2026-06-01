@@ -9,6 +9,18 @@ import {
 
 const PAYMENT_LOCK_TTL_MS = 1000 * 60 * 10;
 
+/**
+ * Servicio de participacion y pagos de reservaciones/eventos comprados.
+ *
+ * Todas las operaciones que modifican cupo, integrantes o pagos pendientes usan
+ * transacciones de Firestore. Esto es intencional: estos documentos pueden ser
+ * modificados desde app movil, web publica y backend, por lo que no debe haber
+ * writes directos desde pantallas para estos cambios.
+ */
+
+/**
+ * Convierte timestamps Firestore, Date o segundos a milisegundos comparables.
+ */
 function toMillis(value) {
   if (!value) return 0;
   if (typeof value.toMillis === "function") return value.toMillis();
@@ -17,6 +29,9 @@ function toMillis(value) {
   return 0;
 }
 
+/**
+ * Deduplica arreglos de integrantes conservando el primer registro por id.
+ */
 function uniqueById(items = []) {
   const seen = new Set();
   return items.filter((item) => {
@@ -34,6 +49,9 @@ export class ReservationConcurrencyError extends Error {
   }
 }
 
+/**
+ * Extrae ids de integrantes desde campos nuevos y legacy de una reservacion.
+ */
 export function getReservationMemberIds(reservation = {}) {
   return [
     ...new Set(
@@ -81,6 +99,9 @@ export function getPendingPaymentRequest(reservation = {}, userId = "") {
   };
 }
 
+/**
+ * Determina si una reserva cerrada debe ocultarse a usuarios que ya no pertenecen.
+ */
 export function shouldHideReservationForUser(reservation = {}, userId = "") {
   const status = reservation.status || "";
   if (!["cancelada", "curso", "finalizada"].includes(status)) return false;
@@ -88,6 +109,9 @@ export function shouldHideReservationForUser(reservation = {}, userId = "") {
   return !getReservationMemberIds(reservation).includes(userId);
 }
 
+/**
+ * Construye el integrante cuando el propio usuario acepta/unirse desde web.
+ */
 function buildSelfJoinedMember(user, userId) {
   return {
     id: userId,
@@ -103,6 +127,9 @@ function buildSelfJoinedMember(user, userId) {
   };
 }
 
+/**
+ * Implementa la union transaccional compartida para reservaciones y compras.
+ */
 async function joinMemberInRef({
   targetRef,
   user,
@@ -163,6 +190,8 @@ async function joinMemberInRef({
     const existingMember = integrantes.find((member) => member.id === userId);
 
     const capacity = Number(data[capacityField] || data.noPersonas || 0);
+    // La validacion de cupo ocurre dentro de la transaccion para evitar que dos
+    // usuarios ocupen el ultimo lugar al mismo tiempo.
     if (!existingMember && capacity > 0 && integrantesIds.size >= capacity) {
       throw new ReservationConcurrencyError("full", fullMessage);
     }
@@ -225,6 +254,10 @@ export async function joinReservationTransaction(reservationId, user) {
   return { member: result.member, reservation: result.data };
 }
 
+/**
+ * Une al usuario a un detalle de evento, buscando primero en `reservaciones` y
+ * despues en `eventosUsers` para soportar documentos heredados y nuevos.
+ */
 export async function joinEventDetailTransaction(eventDetailId, user) {
   const userId = getUserId(user);
   if (!eventDetailId || !userId) {
@@ -342,6 +375,9 @@ export async function joinEventDetailTransaction(eventDetailId, user) {
   return { member: result.member, eventDetail: result.eventDetail };
 }
 
+/**
+ * Reserva temporalmente un pago pendiente antes de abrir Stripe.
+ */
 async function beginPaymentFromRef(targetRef, targetLabel, userId) {
   if (!targetRef || !userId) {
     throw new ReservationConcurrencyError(
@@ -385,6 +421,8 @@ async function beginPaymentFromRef(targetRef, targetLabel, userId) {
       );
     }
 
+    // Lock temporal: evita doble intento de pago para la misma solicitud cuando
+    // el usuario abre Stripe en mas de un dispositivo o pestaña.
     const paymentLocks = { ...(data.paymentLocks || {}) };
     const existingLock = paymentLocks[userId];
     if (existingLock && toMillis(existingLock.expiresAt) > now) {
@@ -411,6 +449,9 @@ async function beginPaymentFromRef(targetRef, targetLabel, userId) {
   });
 }
 
+/**
+ * Libera un lock de pago cuando el usuario cancela o no se pudo abrir Stripe.
+ */
 async function releasePaymentLockFromRef(targetRef, userId, lockId) {
   if (!targetRef || !userId || !lockId) return;
 
@@ -430,6 +471,9 @@ async function releasePaymentLockFromRef(targetRef, userId, lockId) {
   });
 }
 
+/**
+ * Marca un pago pendiente como pagado y limpia todos los marcadores de deuda.
+ */
 async function completePaymentFromRef({
   targetRef,
   targetLabel,
@@ -464,6 +508,8 @@ async function completePaymentFromRef({
       );
     }
 
+    // Al confirmar, se limpian todos los marcadores de deuda y se actualizan las
+    // listas legacy (`dividers`) y nuevas (`paymentRequests`, `pendingPaymentUserIds`).
     const nextDividersCurso = (data.dividersCurso || []).filter(
       (id) => id !== userId,
     );
@@ -543,6 +589,9 @@ export async function beginReservationPayment(reservationId, userId) {
   );
 }
 
+/**
+ * Inicia lock de pago para un detalle de evento en `eventosUsers`.
+ */
 export async function beginEventDetailPayment(eventDetailId, userId) {
   return beginPaymentFromRef(
     doc(db, "eventosUsers", eventDetailId),
@@ -551,6 +600,9 @@ export async function beginEventDetailPayment(eventDetailId, userId) {
   );
 }
 
+/**
+ * Libera lock de pago de reservacion.
+ */
 export async function releaseReservationPaymentLock(
   reservationId,
   userId,
@@ -563,6 +615,9 @@ export async function releaseReservationPaymentLock(
   );
 }
 
+/**
+ * Libera lock de pago de detalle de evento.
+ */
 export async function releaseEventDetailPaymentLock(
   eventDetailId,
   userId,
@@ -575,6 +630,9 @@ export async function releaseEventDetailPaymentLock(
   );
 }
 
+/**
+ * Completa pago pendiente de reservacion.
+ */
 export async function completeReservationPayment({
   reservationId,
   userId,
@@ -592,6 +650,9 @@ export async function completeReservationPayment({
   });
 }
 
+/**
+ * Completa pago pendiente de detalle de evento.
+ */
 export async function completeEventDetailPayment({
   eventDetailId,
   userId,

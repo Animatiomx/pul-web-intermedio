@@ -10,6 +10,14 @@ import {
 import { db } from "../../../firebase";
 import { normalizeUserSummary } from "../../../shared/utils/users";
 
+/**
+ * Lee asistentes publicos de un evento desde la subcoleccion
+ * `eventos/{eventId}/integrantes`.
+ *
+ * Esta lista excluye compras invitadas no reclamadas: esas compras viven en
+ * `eventosUsers` y `ticketClaims`, pero no deben aparecer en asistentes ni
+ * incrementar `integrantesCount` hasta que el boleto se asocie a una cuenta.
+ */
 export async function fetchEventParticipantsPage(
   eventId,
   cursorId = "",

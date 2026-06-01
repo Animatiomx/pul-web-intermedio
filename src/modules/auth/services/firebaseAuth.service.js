@@ -5,6 +5,12 @@ import {
 } from "firebase/auth";
 import { auth, authPersistenceReady } from "../../../firebase";
 
+/**
+ * Traduce errores tecnicos de Firebase Auth a mensajes accionables para UI.
+ *
+ * Recibe cualquier error lanzado por Firebase o por la capa REST y devuelve un
+ * texto seguro para mostrar al usuario. No lanza errores.
+ */
 export function getFirebaseAuthErrorMessage(error) {
   const code = error?.code || error?.message || "";
   const messages = {

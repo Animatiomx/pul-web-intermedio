@@ -23,6 +23,15 @@ import {
 } from "../../../shared/utils/users";
 
 /**
+ * Servicio de participacion de planes.
+ *
+ * Controla integrantes, solicitudes, lista de espera y sincronizacion con
+ * origenes relacionados (`reservaciones` o `eventosUsers`). Las pantallas deben
+ * usar estos metodos en lugar de escribir directo para conservar contadores,
+ * subcolecciones y documentos origen consistentes.
+ */
+
+/**
  * Normaliza textos de configuracion del plan para comparar sin acentos ni caso.
  */
 function normalizeKey(value) {
@@ -77,10 +86,16 @@ function getPlanOriginType(plan) {
   return "";
 }
 
+/**
+ * Obtiene el id del documento origen ligado al plan, si existe.
+ */
 function getPlanOriginId(plan) {
   return plan?.origenId || plan?.originId || "";
 }
 
+/**
+ * Construye la referencia Firestore al origen del plan.
+ */
 function getOriginRef(plan) {
   const originType = getPlanOriginType(plan);
   const originId = getPlanOriginId(plan);
@@ -92,6 +107,9 @@ function getOriginRef(plan) {
   );
 }
 
+/**
+ * Calcula cupo del origen relacionado, soportando reservas y compras de evento.
+ */
 function getOriginCapacity(origin, originType) {
   if (!origin) return 0;
   return Number(
@@ -101,6 +119,9 @@ function getOriginCapacity(origin, originType) {
   );
 }
 
+/**
+ * Extrae ids de integrantes del origen desde arreglos nuevos y heredados.
+ */
 function getOriginMemberIds(origin = {}) {
   return [
     ...new Set(
@@ -117,6 +138,9 @@ function getOriginMemberIds(origin = {}) {
   ];
 }
 
+/**
+ * Lista usuarios que no pueden salir porque sostienen pagos o propiedad.
+ */
 function getOriginExitBlockedIds(origin = {}) {
   return new Set(
     [
@@ -136,6 +160,9 @@ function getOriginExitBlockedIds(origin = {}) {
   );
 }
 
+/**
+ * Construye integrante compatible con documentos de reserva/evento origen.
+ */
 function buildOriginMember(user, userId) {
   return {
     id: userId,
@@ -151,6 +178,9 @@ function buildOriginMember(user, userId) {
   };
 }
 
+/**
+ * Agrega/actualiza integrante en el documento origen sin duplicar ids.
+ */
 function addMemberToOrigin(origin, user, userId) {
   const currentMembers = Array.isArray(origin.integrantes)
     ? origin.integrantes
@@ -181,6 +211,9 @@ function addMemberToOrigin(origin, user, userId) {
   };
 }
 
+/**
+ * Agrega/actualiza integrante dentro de un arreglo legacy.
+ */
 function addMemberToList(members, user, userId) {
   const nextMembersById = new Map(
     (members || []).filter((item) => item?.id).map((item) => [item.id, item]),
@@ -193,6 +226,9 @@ function addMemberToList(members, user, userId) {
   return Array.from(nextMembersById.values());
 }
 
+/**
+ * Remueve un integrante del documento origen y de sus arreglos legacy.
+ */
 function removeMemberFromOrigin(origin, userId) {
   return {
     integrantes: (origin.integrantes || []).filter((item) => item?.id !== userId),
@@ -203,6 +239,9 @@ function removeMemberFromOrigin(origin, userId) {
   };
 }
 
+/**
+ * Valida cupo del origen y devuelve la lista de ids resultante.
+ */
 function assertOriginCapacity(origin, originType, userId) {
   const memberIds = getOriginMemberIds(origin);
   if (memberIds.includes(userId)) return memberIds;
@@ -328,6 +367,9 @@ export async function getLinkedPlanByOrigin(originType, originId) {
   return { id: planDoc.id, ...planDoc.data() };
 }
 
+/**
+ * Agrupa referencias de subcolecciones de plan usadas dentro de transacciones.
+ */
 export function buildLinkedPlanRefs(planId, userId) {
   return {
     planRef: doc(db, "planes", planId),
@@ -337,6 +379,9 @@ export function buildLinkedPlanRefs(planId, userId) {
   };
 }
 
+/**
+ * Encola dentro de una transaccion externa la union al plan ligado al origen.
+ */
 export function queueJoinLinkedPlanInTransaction({
   transaction,
   plan,
@@ -550,6 +595,8 @@ export async function joinPlanTransaction(planId, user) {
 
     const visibility = plan.visibilidad;
 
+    // Plan privado: se crea solicitud y no integrante definitivo hasta que el
+    // anfitrion acepte, salvo que el usuario ya venga del origen asociado.
     if (isPrivatePlan(visibility) && !isOriginMember) {
       if (origin) {
         assertOriginCapacity(origin, originType, userId);
@@ -603,6 +650,8 @@ export async function joinPlanTransaction(planId, user) {
     const currentMembers = getPlanCount(plan, "integrantes");
     const capacity = getPlanCapacity(plan);
 
+    // Si existe origen, el cupo real vive en reservacion/evento y debe validarse
+    // en la misma transaccion que el alta del integrante del plan.
     if (origin) {
       assertOriginCapacity(origin, originType, userId);
     } else if (capacity > 0 && currentMembers >= capacity) {
@@ -809,6 +858,8 @@ export async function leavePlanTransaction(planId, user) {
     }
 
     if (memberSnap.exists() && originRef && origin) {
+      // Usuarios con pagos/divisiones pendientes no pueden salir porque dejarian
+      // la cuenta o la compra relacionada en estado inconsistente.
       if (getOriginExitBlockedIds(origin).has(userId)) {
         throw new Error(
           "No puedes salir de este plan porque estás en división de cuenta o tienes pagos asociados.",

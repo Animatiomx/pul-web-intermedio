@@ -113,16 +113,25 @@ function goHome() {
   window.location.assign("/");
 }
 
+/**
+ * Decide si un error de carga debe regresar al usuario al home.
+ */
 function shouldGoHomeForLoadError(error) {
   return [400, 404].includes(Number(error?.status));
 }
 
+/**
+ * Etiqueta humana para mensajes de enlace no encontrado.
+ */
 function getInviteKindLabel(kind) {
   if (kind === "reserva") return "reservación";
   if (kind === "event" || kind === "eventDetail") return "evento";
   return "plan";
 }
 
+/**
+ * Extrae URL de checkout tolerando varias respuestas del backend Stripe.
+ */
 function getCheckoutUrl(result) {
   return (
     result?.url ||
@@ -133,6 +142,9 @@ function getCheckoutUrl(result) {
   );
 }
 
+/**
+ * Firma ligera usada para evitar renders cuando la invitacion no cambio.
+ */
 function getInviteSignature(invite) {
   return JSON.stringify({
     id: invite?.id || "",
@@ -160,6 +172,9 @@ function getInviteSignature(invite) {
   });
 }
 
+/**
+ * Actualiza estado solo cuando la firma de invitacion realmente cambia.
+ */
 function setInviteIfChanged(setInvite, nextInvite) {
   setInvite((current) =>
     getInviteSignature(current) === getInviteSignature(nextInvite)
@@ -168,14 +183,23 @@ function setInviteIfChanged(setInvite, nextInvite) {
   );
 }
 
+/**
+ * Key de sessionStorage para compras de evento ya resueltas.
+ */
 function getEventPurchaseStorageKey(eventId) {
   return `pulEventPurchase:${eventId}`;
 }
 
+/**
+ * Key de sessionStorage para compra invitada pendiente de volver de Stripe.
+ */
 function getPendingGuestPurchaseStorageKey(eventId) {
   return `pulPendingGuestEventPurchase:${eventId}`;
 }
 
+/**
+ * Loader comun mientras se resuelve invitacion o sesion.
+ */
 function PulLoader() {
   return (
     <main className="pul-loader-shell" aria-live="polite">
@@ -188,6 +212,9 @@ function PulLoader() {
   );
 }
 
+/**
+ * Aviso para enlaces invalidos antes de redirigir al inicio.
+ */
 function NotFoundNotice({ kind }) {
   const label = getInviteKindLabel(kind);
 
@@ -206,7 +233,28 @@ function NotFoundNotice({ kind }) {
 }
 
 /**
- * Pantalla publica principal que orquesta invitaciones, auth, pagos y deep links.
+ * Orquestador publico principal de Pul Web.
+ *
+ * Esta pantalla es el punto comun para enlaces de planes, reservaciones,
+ * detalles de evento y venta publica de eventos. Su responsabilidad es
+ * coordinar datos remotos, sesion Firebase, formularios, pagos Stripe,
+ * listeners Firestore y delegar el render a vistas especializadas.
+ *
+ * Contratos principales:
+ * - Entrada: URL publica. `getInviteContext` decide si el dominio es plan,
+ *   reserva, evento o detalle de evento.
+ * - Salida visual: `PlanWebView` para planes y `PublicInviteView` para
+ *   reservas/eventos.
+ * - Persistencia: servicios de planes, reservaciones y eventos encapsulan las
+ *   transacciones de Firestore. Esta pantalla no debe escribir documentos
+ *   complejos directamente salvo listeners o perfil de usuario.
+ * - Pagos: usuarios autenticados usan PaymentIntent y customer Stripe; invitados
+ *   usan Checkout Session y un endpoint backend que verifica el pago antes de
+ *   escribir `eventosUsers`.
+ *
+ * Al modificar este archivo, revisar siempre los efectos que dependen de URL
+ * (`payment=success`, `session_id`) y los estados `flowStatus`, porque gobiernan
+ * los mensajes, modales y reintentos.
  */
 function PublicInviteScreen() {
   const isComingSoonView =
@@ -446,6 +494,8 @@ function PublicInviteScreen() {
           );
         }
         const purchase = JSON.parse(storedPurchase);
+        // Compra invitada: el navegador solo conserva el borrador. El backend
+        // verifica Stripe y hace las escrituras criticas con permisos admin.
         await postJson(EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT, {
           sessionId,
           purchase,
@@ -1326,7 +1376,7 @@ function PublicInviteScreen() {
   };
 
   /** Solicita al backend enviar confirmacion de compra y QR al correo del comprador. */
-  const sendTicketEmail = async (purchase) => {
+  async function sendTicketEmail(purchase) {
     if (!EMAIL_CONFIRMATION_ENDPOINT || !purchase?.buyer?.email) return;
     await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
       to: purchase.buyer.email,
@@ -1347,7 +1397,7 @@ function PublicInviteScreen() {
           : [],
       },
     });
-  };
+  }
 
   /** Une al usuario actual al plan o inicia solicitud/lista de espera segun reglas. */
   const joinCurrentPlan = async () => {
@@ -1443,7 +1493,17 @@ function PublicInviteScreen() {
     }
   };
 
-  /** Completa compra de evento como invitado o usuario autenticado. */
+  /**
+   * Inicia compra publica de evento.
+   *
+   * Invitado: genera un claim code sin leer Firestore, guarda el borrador en
+   * sessionStorage y redirige a Stripe Checkout. Al volver con `session_id`, el
+   * backend verifica el pago y registra `eventosUsers`, disponibilidad y
+   * `ticketClaims`.
+   *
+   * Autenticado: mantiene compatibilidad con el fallback de checkout; el camino
+   * principal con cuenta se inicia en `buyAsUser`.
+   */
   const completeGuestPurchase = async (buyer) => {
     if (!selectedItem) {
       setFlowStatus("purchase-error");
@@ -1616,7 +1676,12 @@ function PublicInviteScreen() {
     });
   };
 
-  /** Usa la cuenta autenticada como comprador del evento. */
+  /**
+   * Inicia compra de evento con cuenta Pul.
+   *
+   * Requiere un usuario autenticado y un customer Stripe. Usa PaymentIntent para
+   * mostrar PaymentElement y conservar el pago asociado al perfil del usuario.
+   */
   const buyAsUser = async () => {
     if (!authUser) {
       setView("register");
@@ -1677,6 +1742,14 @@ function PublicInviteScreen() {
     setFlowStatus("idle");
   };
 
+  /**
+   * Persiste una compra autenticada despues de que Stripe confirma el pago.
+   *
+   * Impacto:
+   * - Crea un documento en `eventosUsers`.
+   * - Resta disponibilidad del boleto o bloquea la mesa en `eventos`.
+   * - Crea/actualiza el integrante del evento y evita duplicar `integrantesCount`.
+   */
   const confirmEventPayment = async (paymentIntent) => {
     const session = eventPaymentSession;
     if (!session) return;

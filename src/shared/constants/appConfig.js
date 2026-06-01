@@ -1,3 +1,10 @@
+/**
+ * Constantes de integracion externa.
+ *
+ * Todas aceptan override por `import.meta.env` para poder apuntar a backend
+ * local, staging o produccion sin cambiar codigo. Los defaults apuntan a la API
+ * productiva de Pul y a los esquemas de deep link usados por la app nativa.
+ */
 export const APP_DEEP_LINK_BASE =
   import.meta.env.VITE_APP_DEEP_LINK_BASE || "pul://plan";
 export const RESERVA_DEEP_LINK_BASE =

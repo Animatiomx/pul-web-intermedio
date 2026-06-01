@@ -15,8 +15,11 @@ import {
 } from "./PublicInviteRichViews";
 
 /**
- * Vista publica para eventos, reservas y fallback de planes.
- * Recibe estado y handlers desde PublicInviteScreen para mantener la UI separada.
+ * Vista publica legacy para eventos, reservas y fallback de planes.
+ *
+ * No ejecuta reglas de negocio propias: recibe datos normalizados, estados y
+ * handlers desde `PublicInviteScreen`. Se mantiene para rutas/estados que aun no
+ * usan las vistas ricas y para conservar compatibilidad visual.
  */
 export default function PublicInviteView({
   isPlan,
