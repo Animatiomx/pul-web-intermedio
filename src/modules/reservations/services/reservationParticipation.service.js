@@ -1,6 +1,11 @@
 import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../../../firebase";
 import { getUserId } from "../../../shared/utils/users";
+import {
+  buildLinkedPlanRefs,
+  getLinkedPlanByOrigin,
+  queueJoinLinkedPlanInTransaction,
+} from "../../plans/services/planParticipation.service";
 
 const PAYMENT_LOCK_TTL_MS = 1000 * 60 * 10;
 
@@ -114,6 +119,7 @@ async function joinMemberInRef({
     "finalizada",
     "finalizado",
   ],
+  linkedPlan = null,
 }) {
   const userId = getUserId(user);
   if (!targetRef || !userId) {
@@ -130,6 +136,19 @@ async function joinMemberInRef({
     }
 
     const data = { id: snap.id, ...snap.data() };
+    const linkedPlanRefs = linkedPlan?.id
+      ? buildLinkedPlanRefs(linkedPlan.id, userId)
+      : null;
+    const [linkedPlanSnap, linkedMemberSnap, linkedRequestSnap, linkedWaitlistSnap] =
+      linkedPlanRefs
+        ? await Promise.all([
+            transaction.get(linkedPlanRefs.planRef),
+            transaction.get(linkedPlanRefs.memberRef),
+            transaction.get(linkedPlanRefs.requestRef),
+            transaction.get(linkedPlanRefs.waitlistRef),
+          ])
+        : [null, null, null, null];
+
     const status = String(data.status || "").toLowerCase();
     if (closedStatuses.includes(status)) {
       throw new ReservationConcurrencyError("closed", closedMessage);
@@ -141,34 +160,56 @@ async function joinMemberInRef({
       ...integrantes.map((member) => member.id),
     ]);
 
-    if (integrantesIds.has(userId)) {
-      throw new ReservationConcurrencyError("already-member", alreadyMessage);
-    }
+    const existingMember = integrantes.find((member) => member.id === userId);
 
     const capacity = Number(data[capacityField] || data.noPersonas || 0);
-    if (capacity > 0 && integrantesIds.size >= capacity) {
+    if (!existingMember && capacity > 0 && integrantesIds.size >= capacity) {
       throw new ReservationConcurrencyError("full", fullMessage);
     }
 
-    const member = buildSelfJoinedMember(user, userId);
-    const nextIntegrantes = uniqueById([...integrantes, member]);
-    const nextIntegrantesIds = nextIntegrantes.map((item) => item.id);
-    const patch = {
-      integrantes: nextIntegrantes,
-      integrantesIds: nextIntegrantesIds,
-      updatedAt: serverTimestamp(),
-    };
+    const member = existingMember || buildSelfJoinedMember(user, userId);
 
-    if (includeReviewers) {
-      patch.reviewers = [...new Set([...(data.reviewers || []), userId])];
+    if (!existingMember) {
+      const nextIntegrantes = uniqueById([...integrantes, member]);
+      const nextIntegrantesIds = nextIntegrantes.map((item) => item.id);
+      const patch = {
+        integrantes: nextIntegrantes,
+        integrantesIds: nextIntegrantesIds,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (includeReviewers) {
+        patch.reviewers = [...new Set([...(data.reviewers || []), userId])];
+      }
+
+      transaction.update(targetRef, patch);
     }
 
-    transaction.update(targetRef, patch);
-    return { member, data };
+    let linkedPlanResult = null;
+    if (linkedPlanRefs && linkedPlanSnap) {
+      linkedPlanResult = queueJoinLinkedPlanInTransaction({
+        transaction,
+        plan: linkedPlan,
+        planSnap: linkedPlanSnap,
+        memberSnap: linkedMemberSnap,
+        requestSnap: linkedRequestSnap,
+        waitlistSnap: linkedWaitlistSnap,
+        userId,
+      });
+    }
+
+    return {
+      member,
+      data,
+      alreadyMember: Boolean(existingMember),
+      linkedPlan: linkedPlanResult,
+      alreadyMessage,
+    };
   });
 }
 
 export async function joinReservationTransaction(reservationId, user) {
+  const linkedPlan = await getLinkedPlanByOrigin("reservacion", reservationId);
   const result = await joinMemberInRef({
     targetRef: doc(db, "reservaciones", reservationId),
     user,
@@ -178,24 +219,127 @@ export async function joinReservationTransaction(reservationId, user) {
     fullMessage: "El cupo de esta reservación ya está lleno.",
     capacityField: "noPersonas",
     includeReviewers: true,
+    linkedPlan,
   });
 
   return { member: result.member, reservation: result.data };
 }
 
 export async function joinEventDetailTransaction(eventDetailId, user) {
-  const result = await joinMemberInRef({
-    targetRef: doc(db, "eventosUsers", eventDetailId),
-    user,
-    missingMessage: "El evento ya no existe.",
-    closedMessage: "Este evento ya no acepta integrantes.",
-    alreadyMessage: "Ya formas parte de este evento.",
-    fullMessage: "El cupo de este evento ya está lleno.",
-    capacityField: "personas",
-    closedStatuses: ["cancelada", "cancelado", "curso"],
+  const userId = getUserId(user);
+  if (!eventDetailId || !userId) {
+    throw new ReservationConcurrencyError(
+      "missing",
+      "No se pudo identificar el evento o el usuario.",
+    );
+  }
+
+  const linkedPlan = await getLinkedPlanByOrigin("evento", eventDetailId);
+  const result = await runTransaction(db, async (transaction) => {
+    const reservationRef = doc(db, "reservaciones", eventDetailId);
+    const eventUserRef = doc(db, "eventosUsers", eventDetailId);
+    const linkedPlanRefs = linkedPlan?.id
+      ? buildLinkedPlanRefs(linkedPlan.id, userId)
+      : null;
+
+    const [
+      reservationSnap,
+      eventUserSnap,
+      linkedPlanSnap,
+      linkedMemberSnap,
+      linkedRequestSnap,
+      linkedWaitlistSnap,
+    ] = await Promise.all([
+      transaction.get(reservationRef),
+      transaction.get(eventUserRef),
+      linkedPlanRefs
+        ? transaction.get(linkedPlanRefs.planRef)
+        : Promise.resolve(null),
+      linkedPlanRefs
+        ? transaction.get(linkedPlanRefs.memberRef)
+        : Promise.resolve(null),
+      linkedPlanRefs
+        ? transaction.get(linkedPlanRefs.requestRef)
+        : Promise.resolve(null),
+      linkedPlanRefs
+        ? transaction.get(linkedPlanRefs.waitlistRef)
+        : Promise.resolve(null),
+    ]);
+
+    const baseData = reservationSnap.exists()
+      ? { id: reservationSnap.id, ...reservationSnap.data() }
+      : eventUserSnap.exists()
+        ? { id: eventUserSnap.id, ...eventUserSnap.data() }
+        : null;
+    if (!baseData) {
+      throw new ReservationConcurrencyError(
+        "missing",
+        "El evento ya no existe.",
+      );
+    }
+
+    const status = String(baseData.status || "").toLowerCase();
+    if (["cancelada", "cancelado", "curso"].includes(status)) {
+      throw new ReservationConcurrencyError(
+        "closed",
+        "Este evento ya no acepta integrantes.",
+      );
+    }
+
+    const integrantes = uniqueById(baseData.integrantes || []);
+    const integrantesIds = new Set([
+      ...(baseData.integrantesIds || []),
+      ...integrantes.map((member) => member.id),
+    ]);
+    const existingMember = integrantes.find((member) => member.id === userId);
+    const capacity = Number(baseData.personas || baseData.noPersonas || 0);
+    if (!existingMember && capacity > 0 && integrantesIds.size >= capacity) {
+      throw new ReservationConcurrencyError(
+        "full",
+        "El cupo de este evento ya está lleno.",
+      );
+    }
+
+    const member = existingMember || buildSelfJoinedMember(user, userId);
+    if (!existingMember) {
+      const nextIntegrantes = uniqueById([...integrantes, member]);
+      const nextIntegrantesIds = nextIntegrantes.map((item) => item.id);
+      const sharedPatch = {
+        integrantes: nextIntegrantes,
+        integrantesIds: nextIntegrantesIds,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (reservationSnap.exists()) {
+        transaction.update(reservationRef, sharedPatch);
+      }
+      if (eventUserSnap.exists()) {
+        transaction.update(eventUserRef, sharedPatch);
+      }
+    }
+
+    let linkedPlanResult = null;
+    if (linkedPlanRefs && linkedPlanSnap) {
+      linkedPlanResult = queueJoinLinkedPlanInTransaction({
+        transaction,
+        plan: linkedPlan,
+        planSnap: linkedPlanSnap,
+        memberSnap: linkedMemberSnap,
+        requestSnap: linkedRequestSnap,
+        waitlistSnap: linkedWaitlistSnap,
+        userId,
+      });
+    }
+
+    return {
+      member,
+      eventDetail: baseData,
+      alreadyMember: Boolean(existingMember),
+      linkedPlan: linkedPlanResult,
+    };
   });
 
-  return { member: result.member, eventDetail: result.data };
+  return { member: result.member, eventDetail: result.eventDetail };
 }
 
 async function beginPaymentFromRef(targetRef, targetLabel, userId) {

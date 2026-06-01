@@ -11,6 +11,7 @@ import {
   serverTimestamp,
   setDoc,
   startAfter,
+  where,
 } from "firebase/firestore";
 import { db } from "../../../firebase";
 import { DEBUG_PREFIX } from "../../../shared/constants/appConfig";
@@ -65,6 +66,153 @@ function getPlanTitle(plan) {
  */
 function getPlanHostId(plan) {
   return plan?.anfitrion?.id || plan?.hostId || plan?.anfitrionId || "";
+}
+
+function getPlanOriginType(plan) {
+  const raw = normalizeKey(plan?.origenTipo || plan?.originType || "");
+  if (raw === "evento" || raw === "event") return "evento";
+  if (raw === "reservacion" || raw === "reserva" || raw === "reservation") {
+    return "reservacion";
+  }
+  return "";
+}
+
+function getPlanOriginId(plan) {
+  return plan?.origenId || plan?.originId || "";
+}
+
+function getOriginRef(plan) {
+  const originType = getPlanOriginType(plan);
+  const originId = getPlanOriginId(plan);
+  if (!originType || !originId) return null;
+  return doc(
+    db,
+    originType === "evento" ? "eventosUsers" : "reservaciones",
+    originId,
+  );
+}
+
+function getOriginCapacity(origin, originType) {
+  if (!origin) return 0;
+  return Number(
+    originType === "evento" || origin.sourceType === "event"
+      ? origin.personas || origin.eventPurchase?.quantity || origin.noPersonas || 0
+      : origin.noPersonas || origin.personas || 0,
+  );
+}
+
+function getOriginMemberIds(origin = {}) {
+  return [
+    ...new Set(
+      [
+        ...(Array.isArray(origin.integrantesIds) ? origin.integrantesIds : []),
+        ...(Array.isArray(origin.integrantes)
+          ? origin.integrantes.map((item) => item?.id)
+          : []),
+        ...(Array.isArray(origin.integrantesDivers)
+          ? origin.integrantesDivers.map((item) => item?.id)
+          : []),
+      ].filter(Boolean),
+    ),
+  ];
+}
+
+function getOriginExitBlockedIds(origin = {}) {
+  return new Set(
+    [
+      origin.anfitrion?.id,
+      origin.createdBy,
+      origin.draftOwnerId,
+      ...(Array.isArray(origin.dividersCurso) ? origin.dividersCurso : []),
+      ...(Array.isArray(origin.pendingPaymentUserIds)
+        ? origin.pendingPaymentUserIds
+        : []),
+      ...(Array.isArray(origin.paymentRequests)
+        ? origin.paymentRequests
+            .filter((item) => item?.status === "pending")
+            .map((item) => item?.id)
+        : []),
+    ].filter(Boolean),
+  );
+}
+
+function buildOriginMember(user, userId) {
+  return {
+    id: userId,
+    nombre: user?.nombre || user?.displayName || user?.email || "",
+    imagen: user?.imagen || user?.photoURL || "",
+    pushToken: user?.pushToken || "",
+    divider: false,
+    pagado: "",
+    joinType: "joinedBySelf",
+    joinedBySelf: true,
+    invitedByAdmin: false,
+    joinedAt: new Date(),
+  };
+}
+
+function addMemberToOrigin(origin, user, userId) {
+  const currentMembers = Array.isArray(origin.integrantes)
+    ? origin.integrantes
+    : [];
+  const nextMembersById = new Map(
+    currentMembers.filter((item) => item?.id).map((item) => [item.id, item]),
+  );
+  nextMembersById.set(userId, {
+    ...buildOriginMember(user, userId),
+    ...(nextMembersById.get(userId) || {}),
+    id: userId,
+  });
+  const nextMembers = Array.from(nextMembersById.values());
+  const nextMemberIds = [
+    ...new Set([
+      ...getOriginMemberIds(origin),
+      ...nextMembers.map((item) => item.id),
+      userId,
+    ]),
+  ];
+
+  return {
+    integrantes: nextMembers,
+    integrantesIds: nextMemberIds,
+    integrantesDivers: Array.isArray(origin.integrantesDivers)
+      ? addMemberToList(origin.integrantesDivers, user, userId)
+      : origin.integrantesDivers || [],
+  };
+}
+
+function addMemberToList(members, user, userId) {
+  const nextMembersById = new Map(
+    (members || []).filter((item) => item?.id).map((item) => [item.id, item]),
+  );
+  nextMembersById.set(userId, {
+    ...buildOriginMember(user, userId),
+    ...(nextMembersById.get(userId) || {}),
+    id: userId,
+  });
+  return Array.from(nextMembersById.values());
+}
+
+function removeMemberFromOrigin(origin, userId) {
+  return {
+    integrantes: (origin.integrantes || []).filter((item) => item?.id !== userId),
+    integrantesIds: getOriginMemberIds(origin).filter((id) => id !== userId),
+    integrantesDivers: (origin.integrantesDivers || []).filter(
+      (item) => item?.id !== userId,
+    ),
+  };
+}
+
+function assertOriginCapacity(origin, originType, userId) {
+  const memberIds = getOriginMemberIds(origin);
+  if (memberIds.includes(userId)) return memberIds;
+
+  const capacity = getOriginCapacity(origin, originType);
+  if (capacity > 0 && memberIds.length >= capacity) {
+    throw new Error("Cupo completo");
+  }
+
+  return [...memberIds, userId];
 }
 
 /**
@@ -155,6 +303,92 @@ export async function fetchPlanMembersPage(planId, cursorId = "", pageSize = 100
     users: memberIds.map((id) => usersById.get(id) || normalizeUserSummary(id)),
     nextCursor: snap.docs.at(-1)?.id || cursorId || "",
     hasMore: snap.docs.length === pageSize,
+  };
+}
+
+export async function getLinkedPlanByOrigin(originType, originId) {
+  if (!originType || !originId) return null;
+
+  const normalizedOriginType =
+    normalizeKey(originType) === "evento" || normalizeKey(originType) === "event"
+      ? "evento"
+      : "reservacion";
+  const plansRef = collection(db, "planes");
+  const plansQuery = query(
+    plansRef,
+    where("origenTipo", "==", normalizedOriginType),
+    where("origenId", "==", originId),
+  );
+  const snap = await getDocs(plansQuery);
+  if (snap.empty) return null;
+
+  const planDoc =
+    snap.docs.find((item) => item.data()?.estatus !== "cancelado") ||
+    snap.docs[0];
+  return { id: planDoc.id, ...planDoc.data() };
+}
+
+export function buildLinkedPlanRefs(planId, userId) {
+  return {
+    planRef: doc(db, "planes", planId),
+    memberRef: planParticipantRef(planId, "integrantes", userId),
+    requestRef: planParticipantRef(planId, "solicitudes", userId),
+    waitlistRef: doc(db, "planes", planId, "listaEspera", userId),
+  };
+}
+
+export function queueJoinLinkedPlanInTransaction({
+  transaction,
+  plan,
+  planSnap,
+  memberSnap,
+  requestSnap,
+  waitlistSnap,
+  userId,
+}) {
+  if (!planSnap.exists()) return { status: "no-plan" };
+  const freshPlan = { ...plan, id: planSnap.id, ...planSnap.data() };
+  if (getPlanHostId(freshPlan) === userId) {
+    return {
+      status: "host",
+      message: "Tú eres el anfitrión de este plan.",
+      plan: freshPlan,
+    };
+  }
+
+  const { planRef, memberRef } = buildLinkedPlanRefs(freshPlan.id, userId);
+
+  if (!memberSnap.exists()) {
+    transaction.set(
+      memberRef,
+      {
+        id: userId,
+        userId,
+        planId: freshPlan.id,
+        created_at: serverTimestamp(),
+      },
+      { merge: true },
+    );
+    transaction.update(planRef, {
+      integrantes: [],
+      solicitudes: [],
+      integrantesCount: getPlanCount(freshPlan, "integrantes") + 1,
+      solicitudesCount: Math.max(
+        0,
+        getPlanCount(freshPlan, "solicitudes") -
+          (requestSnap.exists() ? 1 : 0),
+      ),
+      participantesStorage: "subcoleccion",
+      updated_at: serverTimestamp(),
+    });
+  }
+  if (requestSnap.exists()) transaction.delete(requestSnap.ref);
+  if (waitlistSnap.exists()) transaction.delete(waitlistSnap.ref);
+
+  return {
+    status: memberSnap.exists() ? "joined" : "linked-joined",
+    message: "También te unimos al plan relacionado.",
+    plan: freshPlan,
   };
 }
 
@@ -286,19 +520,40 @@ export async function joinPlanTransaction(planId, user) {
       return { status: "host", message: "Tú eres el anfitrión de este plan.", plan };
     }
 
-    const [memberSnap, requestSnap, waitlistSnap] = await Promise.all([
+    const originType = getPlanOriginType(plan);
+    const originRef = getOriginRef(plan);
+    const [memberSnap, requestSnap, waitlistSnap, originSnap] = await Promise.all([
       transaction.get(memberRef),
       transaction.get(requestRef),
       transaction.get(waitlistRef),
+      originRef ? transaction.get(originRef) : Promise.resolve(null),
     ]);
+    const origin = originSnap?.exists()
+      ? { id: originSnap.id, ...originSnap.data() }
+      : null;
+    if (originRef && !origin) {
+      throw new Error("La reservación o evento asociado ya no existe.");
+    }
+    const originMemberIds = origin ? getOriginMemberIds(origin) : [];
+    const isOriginMember = originMemberIds.includes(userId);
 
     if (memberSnap.exists()) {
-      return { status: "joined", message: "Ya formas parte de este plan." };
+      if (originRef && origin && !isOriginMember) {
+        assertOriginCapacity(origin, originType, userId);
+        transaction.update(originRef, {
+          ...addMemberToOrigin(origin, user, userId),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      return { status: "joined", message: "Ya formas parte de este plan.", plan };
     }
 
     const visibility = plan.visibilidad;
 
-    if (isPrivatePlan(visibility)) {
+    if (isPrivatePlan(visibility) && !isOriginMember) {
+      if (origin) {
+        assertOriginCapacity(origin, originType, userId);
+      }
       if (!requestSnap.exists()) {
         const currentRequests = getPlanCount(plan, "solicitudes");
         transaction.set(
@@ -326,7 +581,7 @@ export async function joinPlanTransaction(planId, user) {
       };
     }
 
-    if (isFriendsPlan(visibility) && hostId) {
+    if (isFriendsPlan(visibility) && hostId && !isOriginMember) {
       const friendRef = doc(db, "usuarios", hostId, "amigos", userId);
       const hostRef = doc(db, "usuarios", hostId);
       const [friendSnap, hostSnap] = await Promise.all([
@@ -348,7 +603,9 @@ export async function joinPlanTransaction(planId, user) {
     const currentMembers = getPlanCount(plan, "integrantes");
     const capacity = getPlanCapacity(plan);
 
-    if (capacity > 0 && currentMembers >= capacity) {
+    if (origin) {
+      assertOriginCapacity(origin, originType, userId);
+    } else if (capacity > 0 && currentMembers >= capacity) {
       if (!waitlistSnap.exists()) {
         transaction.set(
           waitlistRef,
@@ -380,6 +637,12 @@ export async function joinPlanTransaction(planId, user) {
     );
     if (requestSnap.exists()) transaction.delete(requestRef);
     if (waitlistSnap.exists()) transaction.delete(waitlistRef);
+    if (originRef && origin && !isOriginMember) {
+      transaction.update(originRef, {
+        ...addMemberToOrigin(origin, user, userId),
+        updatedAt: serverTimestamp(),
+      });
+    }
     transaction.update(planRef, {
       integrantes: [],
       solicitudes: [],
@@ -412,6 +675,105 @@ export async function joinPlanTransaction(planId, user) {
   return result;
 }
 
+export async function joinLinkedPlanFromOrigin(originType, originId, user) {
+  const userId = getUserId(user);
+  if (!originType || !originId || !userId) return { status: "missing" };
+
+  const plan = await getLinkedPlanByOrigin(originType, originId);
+  if (!plan?.id) return { status: "no-plan" };
+
+  const planRef = doc(db, "planes", plan.id);
+  const memberRef = planParticipantRef(plan.id, "integrantes", userId);
+  const requestRef = planParticipantRef(plan.id, "solicitudes", userId);
+  const waitlistRef = doc(db, "planes", plan.id, "listaEspera", userId);
+  const originRef = getOriginRef(plan);
+
+  const result = await runTransaction(db, async (transaction) => {
+    const [planSnap, memberSnap, requestSnap, waitlistSnap, originSnap] =
+      await Promise.all([
+        transaction.get(planRef),
+        transaction.get(memberRef),
+        transaction.get(requestRef),
+        transaction.get(waitlistRef),
+        originRef ? transaction.get(originRef) : Promise.resolve(null),
+      ]);
+
+    if (!planSnap.exists()) return { status: "no-plan" };
+
+    const freshPlan = { id: planSnap.id, ...planSnap.data() };
+    if (getPlanHostId(freshPlan) === userId) {
+      return { status: "host", message: "Tú eres el anfitrión de este plan.", plan: freshPlan };
+    }
+
+    const origin = originSnap?.exists()
+      ? { id: originSnap.id, ...originSnap.data() }
+      : null;
+    if (originRef && !origin) {
+      throw new Error("La reservación o evento asociado ya no existe.");
+    }
+    const originPlanType = getPlanOriginType(freshPlan);
+    const originMemberIds = origin ? getOriginMemberIds(origin) : [];
+    const isOriginMember = originMemberIds.includes(userId);
+
+    if (!isOriginMember && originRef && origin) {
+      assertOriginCapacity(origin, originPlanType, userId);
+      transaction.update(originRef, {
+        ...addMemberToOrigin(origin, user, userId),
+        updatedAt: serverTimestamp(),
+      });
+    } else if (!origin && getPlanCapacity(freshPlan) > 0) {
+      const currentMembers = getPlanCount(freshPlan, "integrantes");
+      if (currentMembers >= getPlanCapacity(freshPlan) && !memberSnap.exists()) {
+        throw new Error("Cupo completo");
+      }
+    }
+
+    if (!memberSnap.exists()) {
+      transaction.set(
+        memberRef,
+        {
+          id: userId,
+          userId,
+          planId: freshPlan.id,
+          created_at: serverTimestamp(),
+        },
+        { merge: true },
+      );
+      transaction.update(planRef, {
+        integrantes: [],
+        solicitudes: [],
+        integrantesCount: getPlanCount(freshPlan, "integrantes") + 1,
+        solicitudesCount: Math.max(
+          0,
+          getPlanCount(freshPlan, "solicitudes") -
+            (requestSnap.exists() ? 1 : 0),
+        ),
+        participantesStorage: "subcoleccion",
+      });
+    }
+    if (requestSnap.exists()) transaction.delete(requestRef);
+    if (waitlistSnap.exists()) transaction.delete(waitlistRef);
+
+    return {
+      status: memberSnap.exists() ? "joined" : "linked-joined",
+      message: "También te unimos al plan relacionado.",
+      plan: freshPlan,
+    };
+  });
+
+  if (result.status === "linked-joined") {
+    await recordPlanActivity(
+      plan.id,
+      "join",
+      user,
+      `${user.nombre || user.email} se unió al plan`,
+    );
+    await notifyHostPlanParticipation(result.plan, user, "joined");
+  }
+
+  return result;
+}
+
 /**
  * Quita al usuario de integrantes, solicitudes o lista de espera en una transaccion.
  */
@@ -432,11 +794,31 @@ export async function leavePlanTransaction(planId, user) {
       return { status: "host", message: "No puedes salir, eres el anfitrión.", plan };
     }
 
-    const [memberSnap, requestSnap, waitlistSnap] = await Promise.all([
+    const originRef = getOriginRef(plan);
+    const [memberSnap, requestSnap, waitlistSnap, originSnap] = await Promise.all([
       transaction.get(memberRef),
       transaction.get(requestRef),
       transaction.get(waitlistRef),
+      originRef ? transaction.get(originRef) : Promise.resolve(null),
     ]);
+    const origin = originSnap?.exists()
+      ? { id: originSnap.id, ...originSnap.data() }
+      : null;
+    if (memberSnap.exists() && originRef && !origin) {
+      throw new Error("La reservación o evento asociado ya no existe.");
+    }
+
+    if (memberSnap.exists() && originRef && origin) {
+      if (getOriginExitBlockedIds(origin).has(userId)) {
+        throw new Error(
+          "No puedes salir de este plan porque estás en división de cuenta o tienes pagos asociados.",
+        );
+      }
+      transaction.update(originRef, {
+        ...removeMemberFromOrigin(origin, userId),
+        updatedAt: serverTimestamp(),
+      });
+    }
 
     const updates = {
       integrantes: [],
@@ -498,12 +880,21 @@ export async function resolvePlanRequest(planId, hostUser, targetUser, action) {
       throw new Error("Solo el anfitrión puede gestionar solicitudes.");
     }
 
-    const [requestSnap, memberSnap] = await Promise.all([
+    const originType = getPlanOriginType(plan);
+    const originRef = getOriginRef(plan);
+    const [requestSnap, memberSnap, originSnap] = await Promise.all([
       transaction.get(requestRef),
       transaction.get(memberRef),
+      originRef ? transaction.get(originRef) : Promise.resolve(null),
     ]);
     if (!requestSnap.exists()) {
       return { status: "missing", message: "La solicitud ya no está pendiente.", plan };
+    }
+    const origin = originSnap?.exists()
+      ? { id: originSnap.id, ...originSnap.data() }
+      : null;
+    if (originRef && !origin) {
+      throw new Error("La reservación o evento asociado ya no existe.");
     }
 
     const currentRequests = getPlanCount(plan, "solicitudes");
@@ -512,6 +903,13 @@ export async function resolvePlanRequest(planId, hostUser, targetUser, action) {
     transaction.delete(requestRef);
 
     if (action === "accept") {
+      if (originRef && origin) {
+        assertOriginCapacity(origin, originType, targetUserId);
+        transaction.update(originRef, {
+          ...addMemberToOrigin(origin, targetUser, targetUserId),
+          updatedAt: serverTimestamp(),
+        });
+      }
       if (!memberSnap.exists()) {
         transaction.set(
           memberRef,
@@ -584,6 +982,11 @@ export async function resolveWaitlistUser(planId, hostUser, targetUser, action) 
     const plan = { id: planSnap.id, ...planSnap.data() };
     if (getPlanHostId(plan) !== hostId) {
       throw new Error("Solo el anfitrión puede gestionar lista de espera.");
+    }
+    if (getPlanOriginType(plan) && getPlanOriginId(plan)) {
+      throw new Error(
+        "Este plan viene de una reservación o evento y no usa lista de espera.",
+      );
     }
 
     const [waitlistSnap, memberSnap] = await Promise.all([

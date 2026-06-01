@@ -384,6 +384,7 @@ export default function PlanWebView({
     userId &&
     (planWaitlist || []).some((item) => (item.userId || item.id) === userId),
   );
+  const isOriginPlan = Boolean(invite.isOriginPlan || (invite.origenTipo && invite.origenId));
   const capacity = Number(invite.capacity || 0);
   const memberCount = Number(invite.members || memberIds.length || 0);
   const spotsLeft = capacity > 0 ? Math.max(capacity - memberCount, 0) : null;
@@ -423,9 +424,11 @@ export default function PlanWebView({
       : isMember
         ? "Salirse del plan"
         : isFull
-          ? "Unirse a lista de espera"
+          ? isOriginPlan
+            ? "Cupo completo"
+            : "Unirse a lista de espera"
           : "Unirse al plan";
-  const effectiveActionText = isWaiting
+  const effectiveActionText = isWaiting && !isOriginPlan
     ? "Salir de lista de espera"
     : isPending
       ? "Cancelar solicitud"
@@ -555,6 +558,7 @@ export default function PlanWebView({
                 }
                 disabled={
                   isHost ||
+                  (isOriginPlan && isFull && !isMember && !isPending) ||
                   flowStatus === "joining-plan" ||
                   flowStatus === "leaving-plan"
                 }
@@ -753,7 +757,7 @@ export default function PlanWebView({
               </div>
             </PlanSection>
           )}
-          {isHost && waitlistUsers.length > 0 && (
+          {isHost && !isOriginPlan && waitlistUsers.length > 0 && (
             <PlanSection
               icon="waitlist"
               title={`Lista de espera (${waitlistUsers.length})`}

@@ -189,6 +189,8 @@ export function normalizePlan(document, id) {
     .map((item) => normalizeUserSummary(item));
   const miembros = Number(data.integrantesCount ?? integrantes.length ?? 0);
   const planVariant = getPlanVariant(data);
+  const originType = data.origenTipo || data.originType || "";
+  const originId = data.origenId || data.originId || "";
   const attendees = integrantesUsers.length
     ? integrantesUsers
     : integrantesIds.map((memberId) =>
@@ -219,7 +221,11 @@ export function normalizePlan(document, id) {
     visibility: data.visibilidad || "amigos",
     status: data.estatus || "",
     emoji: planVariant === 'normal' ? (data.emoji || "" ) : '',
-    tags: data.hashtags || data.tags.map((tag) => `#${tag}`).join(" ") || data.tendencias?.tags || [],
+    tags:
+      data.hashtags ||
+      (Array.isArray(data.tags)
+        ? data.tags.map((tag) => `#${tag}`).join(" ")
+        : data.tendencias?.tags || []),
     image: data.linkedEntity?.image || "",
     integrantesIds,
     solicitudesIds,
@@ -231,6 +237,9 @@ export function normalizePlan(document, id) {
     fee: null,
     participants: null,
     resourceType: "plan",
+    origenTipo: originType,
+    origenId: originId,
+    isOriginPlan: Boolean(originType && originId),
     live: data.live
   };
 }
