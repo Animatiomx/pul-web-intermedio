@@ -1829,6 +1829,8 @@ function PublicInviteScreen() {
         idStripe,
         amount: toStripeAmount(guestTotal),
         captureMethod: "automatic",
+        paymentMethodTypes: ["card"],
+        automaticPaymentMethods: false,
         metadata: {
           id_ref: invite.id,
           vista: "evento_web",
@@ -2103,6 +2105,8 @@ function PublicInviteScreen() {
         idStripe,
         amount: toStripeAmount(paymentClaim.request.monto),
         captureMethod: invite?.raw?.status === "curso" ? "automatic" : "manual",
+        paymentMethodTypes: ["card"],
+        automaticPaymentMethods: false,
         metadata: {
           id_ref: invite.id,
           vista: isEventDetail

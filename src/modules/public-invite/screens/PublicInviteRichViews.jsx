@@ -189,9 +189,15 @@ function ReservationPaymentForm({
               email: "never",
             },
           },
+          paymentMethodOrder: ["card"],
+          wallets: {
+            applePay: "never",
+            googlePay: "never",
+          },
           layout: {
             type: "accordion",
             defaultCollapsed: false,
+            visibleAccordionItemsCount: 1,
           },
         }}
       />
@@ -230,7 +236,13 @@ function ReservationPaymentModal({
   const stripePromise = useMemo(
     () =>
       paymentSession?.publishableKey
-        ? loadStripe(paymentSession.publishableKey)
+        ? loadStripe(paymentSession.publishableKey, {
+            developerTools: {
+              assistant: {
+                enabled: false,
+              },
+            },
+          })
         : null,
     [paymentSession],
   );
