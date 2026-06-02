@@ -844,9 +844,8 @@
   gap: 8px;
   border-radius: 16px;
   padding: 12px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--reservation-accent) 6%, transparent), transparent),
-    var(--color-background-secondary);
+  background: linear-gradient(135deg, 
+color-mix(in srgb, #AB1E5C 6%, transparent), transparent), #f8f8f8;
 }
 
 .reservation-member img {
@@ -2754,7 +2753,7 @@ button:disabled {
 
 .plan-web-icon,
 .plan-web-shell .primary-button {
-  background: linear-gradient(135deg, var(--plan-accent), var(--plan-accent-strong));
+  background: linear-gradient(135deg, #AB1E5C, #FF5045);
 }
 
 .plan-web-icon svg {
@@ -3694,9 +3693,7 @@ small {
 .event-attendees-section {
   border-radius: 22px;
   padding: 20px;
-  background:
-    linear-gradient(135deg, rgba(255, 80, 69, 0.06), rgba(171, 30, 92, 0.04)),
-    rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.94);
   box-shadow:
     0 18px 44px rgba(81, 33, 47, 0.08),
     0 2px 0 rgba(255, 255, 255, 0.7) inset;

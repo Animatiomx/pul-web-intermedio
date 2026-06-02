@@ -409,6 +409,13 @@ export function normalizeEvent(document, id, kind = "event") {
         raw: table,
       }))
     : [];
+  const integrantes = Array.isArray(data.integrantes) ? data.integrantes : [];
+  const integrantesIds = Array.isArray(data.integrantesIds)
+    ? data.integrantesIds
+    : [];
+  const integrantesCount = Number(
+    data.integrantesCount ?? integrantesIds.length ?? integrantes.length ?? 0,
+  );
 
   return {
     id: data.id || id,
@@ -426,9 +433,7 @@ export function normalizeEvent(document, id, kind = "event") {
     host: data.nombreNegocio || "Pul",
     hostImage: "",
     capacity: Number(data.cupo || 0),
-    members: Array.isArray(data.integrantesIds)
-      ? data.integrantesIds.length
-      : 0,
+    members: integrantesCount,
     tags: [
       "Evento",
       tickets.length ? "Boletos" : "",
@@ -448,7 +453,12 @@ export function normalizeEvent(document, id, kind = "event") {
     rules: data.reglas || "",
     details: data.especificaciones || "",
     periodicity: Array.isArray(data.periodicidad) ? data.periodicidad : [],
-    raw: data,
+    raw: {
+      ...data,
+      integrantes,
+      integrantesIds,
+      integrantesCount,
+    },
   };
 }
 

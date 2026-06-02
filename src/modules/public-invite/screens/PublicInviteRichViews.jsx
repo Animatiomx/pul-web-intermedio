@@ -18,6 +18,8 @@ import {
   getReservationMemberIds,
 } from "../../reservations/services/reservationParticipation.service";
 
+const EVENT_PUBLIC_ATTENDEES_LIMIT = 50;
+
 /**
  * Iconos locales usados por las vistas ricas sin cargar una libreria extra.
  */
@@ -1679,6 +1681,10 @@ export function EventPublicView({
     attendeesCount > visibleEventAttendees.length ||
     eventAttendees.length > visibleEventAttendees.length ||
     eventAttendeesHasMore;
+  const shouldPromptLoginForMoreAttendees =
+    !authUser &&
+    eventAttendees.length >= EVENT_PUBLIC_ATTENDEES_LIMIT &&
+    attendeesCount > eventAttendees.length;
 
   const moveImage = (direction) => {
     if (!images.length) return;
@@ -1957,6 +1963,42 @@ export function EventPublicView({
         </section>
       )}
 
+       {eventAttendees.length > 0 && (
+        <section className="mobile-section event-attendees-section">
+          <div className="plan-web-section-head event-attendees-head">
+            <span className="plan-web-icon" aria-hidden="true">
+              <ReservationIcon name="users" />
+            </span>
+            <h2>Personas que asistirán</h2>
+            <span>{eventAttendees.length} {eventAttendees.length > 1 ? 'Asistentes' : 'Asistente'}</span>
+          </div>
+          <div className="reservation-members-grid event-attendees-grid">
+            {visibleEventAttendees.map((attendee) => (
+              <button
+                className="reservation-member event-attendee-card"
+                type="button"
+                key={attendee.id || attendee.email || attendee.nombre}
+                onClick={() => setAttendeesModalOpen(true)}
+              >
+                <img src={attendee.imagen || defaultAvatar} alt="" />
+                <span>{attendee.nombre || "Asistente"}</span>
+                {/* <em className="reservation-member-badge guest">Asistente</em> */}
+              </button>
+            ))}
+          </div>
+          {hasMoreAttendees && (
+            <button
+              className="ghost-button compact"
+              type="button"
+              onClick={() => setAttendeesModalOpen(true)}
+              disabled={eventAttendeesLoading}
+            >
+              Ver asistentes
+            </button>
+          )}
+        </section>
+      )}
+
       <section className="event-web-purchase" id="comprar">
         <div className="mobile-section-head">
           <h2>Compra de boletos</h2>
@@ -2163,42 +2205,6 @@ export function EventPublicView({
         </div>
       </section>
 
-      {eventAttendees.length > 0 && (
-        <section className="mobile-section event-attendees-section">
-          <div className="plan-web-section-head event-attendees-head">
-            <span className="plan-web-icon" aria-hidden="true">
-              <ReservationIcon name="users" />
-            </span>
-            <h2>Personas que asistirán</h2>
-            <span>{attendeesCount}</span>
-          </div>
-          <div className="reservation-members-grid event-attendees-grid">
-            {visibleEventAttendees.map((attendee) => (
-              <button
-                className="reservation-member event-attendee-card"
-                type="button"
-                key={attendee.id || attendee.email || attendee.nombre}
-                onClick={() => setAttendeesModalOpen(true)}
-              >
-                <img src={attendee.imagen || defaultAvatar} alt="" />
-                <span>{attendee.nombre || "Asistente"}</span>
-                <em className="reservation-member-badge guest">Asistente</em>
-              </button>
-            ))}
-          </div>
-          {hasMoreAttendees && (
-            <button
-              className="ghost-button compact"
-              type="button"
-              onClick={() => setAttendeesModalOpen(true)}
-              disabled={eventAttendeesLoading}
-            >
-              Ver asistentes
-            </button>
-          )}
-        </section>
-      )}
-
       {attendeesModalOpen && (
         <div className="reservation-modal-backdrop" role="presentation">
           <section
@@ -2235,8 +2241,24 @@ export function EventPublicView({
                 onClick={loadMoreEventAttendees}
                 disabled={eventAttendeesLoading}
               >
-                {eventAttendeesLoading ? "Cargando..." : "Cargar más"}
+                {eventAttendeesLoading ? "Cargando..." : "Cargar 20 más"}
               </button>
+            )}
+            {shouldPromptLoginForMoreAttendees && (
+              <div className="reservation-auth-card">
+                <strong>Hay más integrantes</strong>
+                <p>Para ver más integrantes necesitas tener una cuenta.</p>
+                <button
+                  className="primary-button compact"
+                  type="button"
+                  onClick={() => {
+                    setAttendeesModalOpen(false);
+                    setView("login");
+                  }}
+                >
+                  Iniciar sesión
+                </button>
+              </div>
             )}
           </section>
         </div>

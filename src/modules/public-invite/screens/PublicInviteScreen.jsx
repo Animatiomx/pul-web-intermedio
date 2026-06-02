@@ -109,6 +109,10 @@ const initialGuestForm = {
   telefono: "",
 };
 
+const EVENT_PUBLIC_ATTENDEES_LIMIT = 50;
+const EVENT_ATTENDEES_INITIAL_SIZE = 10;
+const EVENT_ATTENDEES_PAGE_SIZE = 20;
+
 function goHome() {
   window.location.assign("/");
 }
@@ -197,6 +201,17 @@ function getPendingGuestPurchaseStorageKey(eventId) {
   return `pulPendingGuestEventPurchase:${eventId}`;
 }
 
+function getEventPurchaseEmailStorageKey(purchaseId, paymentIntentId, sessionId) {
+  return `pulEventPurchaseEmail:${purchaseId || paymentIntentId || sessionId}`;
+}
+
+function getPublicEventAttendees(invite) {
+  return (invite?.raw?.integrantes || [])
+    .slice(0, EVENT_PUBLIC_ATTENDEES_LIMIT)
+    .map((item) => normalizeUserSummary(item))
+    .filter(Boolean);
+}
+
 /**
  * Loader comun mientras se resuelve invitacion o sesion.
  */
@@ -226,6 +241,21 @@ function NotFoundNotice({ kind }) {
           !
         </div>
         <strong>No se encontró el {label}</strong>
+        <p>Te estamos llevando al inicio.</p>
+      </div>
+    </main>
+  );
+}
+
+function EventFinishedNotice() {
+  return (
+    <main className="pul-loader-shell" aria-live="polite">
+      <div className="pul-loader-card">
+        <img src={logo} alt="Pul" className="pul-loader-logo" />
+        <div className="pul-not-found-icon" aria-hidden="true">
+          !
+        </div>
+        <strong>El evento ya terminó</strong>
         <p>Te estamos llevando al inicio.</p>
       </div>
     </main>
@@ -267,6 +297,7 @@ function PublicInviteScreen() {
   const [notFoundKind, setNotFoundKind] = useState(() =>
     !context.id && !isComingSoonView ? context.kind : "",
   );
+  const [eventFinished, setEventFinished] = useState(false);
   const [view, setView] = useState("landing");
   const [registerForm, setRegisterForm] = useState(initialForm);
   const [loginForm, setLoginForm] = useState(initialLoginForm);
@@ -328,6 +359,13 @@ function PublicInviteScreen() {
     const timeoutId = window.setTimeout(goHome, 2200);
     return () => window.clearTimeout(timeoutId);
   }, [notFoundKind]);
+
+  useEffect(() => {
+    if (!eventFinished) return undefined;
+
+    const timeoutId = window.setTimeout(goHome, 2200);
+    return () => window.clearTimeout(timeoutId);
+  }, [eventFinished]);
 
   useEffect(() => {
     let mounted = true;
@@ -437,6 +475,11 @@ function PublicInviteScreen() {
     fetchInvite(context)
       .then((data) => {
         if (ignore) return;
+        if (data.kind === "event" && data.raw?.terminado === true) {
+          setEventFinished(true);
+          setInviteStatus("missing");
+          return;
+        }
         if (
           data.kind === "reserva" &&
           shouldHideReservationForUser(data.raw, getUserId(authUser))
@@ -496,28 +539,39 @@ function PublicInviteScreen() {
         const purchase = JSON.parse(storedPurchase);
         // Compra invitada: el navegador solo conserva el borrador. El backend
         // verifica Stripe y hace las escrituras criticas con permisos admin.
-        await postJson(EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT, {
+        const completion = await postJson(EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT, {
           sessionId,
           purchase,
         });
+        const completedPurchase = {
+          ...purchase,
+          id: completion?.purchaseId || purchase.id,
+          paymentIntentId: completion?.paymentIntentId || purchase.paymentIntentId || "",
+        };
         sessionStorage.setItem(
           getEventPurchaseStorageKey(eventId),
-          JSON.stringify(purchase),
+          JSON.stringify(completedPurchase),
         );
         sessionStorage.removeItem(pendingKey);
-        await sendTicketEmail(purchase).catch((error) => {
-          console.warn(
-            `${DEBUG_PREFIX} Compra registrada, pero no se pudo enviar el correo`,
-            error,
-          );
-        });
+        if (!completion?.alreadyRegistered) {
+          await sendTicketEmail(completedPurchase, sessionId).catch((error) => {
+            console.warn(
+              `${DEBUG_PREFIX} Compra registrada, pero no se pudo enviar el correo`,
+              error,
+            );
+          });
+        }
         if (ignore) return;
         setPlanJoinMessage(
           "Tu pago fue aprobado y tu compra quedo registrada correctamente.",
         );
         setFlowStatus("event-paid");
         url.searchParams.delete("session_id");
+        url.searchParams.delete("payment");
         window.history.replaceState({}, "", url.toString());
+        window.setTimeout(() => {
+          window.location.reload();
+        }, 900);
       } catch (error) {
         if (ignore) return;
         console.error(`${DEBUG_PREFIX} No se pudo registrar compra invitada`, {
@@ -814,10 +868,17 @@ function PublicInviteScreen() {
           return;
         }
 
+        const eventData = snap.data();
+        if (eventData?.terminado === true) {
+          setEventFinished(true);
+          setInviteStatus("missing");
+          return;
+        }
+
         setInviteIfChanged(
           setInvite,
           normalizeEvent(
-            { fields: null, ...snap.data() },
+            { fields: null, ...eventData },
             snap.id,
             context.kind,
           ),
@@ -834,12 +895,42 @@ function PublicInviteScreen() {
   }, [authUser, context.id, context.kind, showNotFound]);
 
   useEffect(() => {
-    if (!context.id || context.kind !== "event") {
+    const isEventInvite =
+      context.kind === "event" || context.kind === "eventDetail";
+
+    if (!context.id || !isEventInvite) {
       return;
     }
 
     let ignore = false;
-    fetchEventParticipantsPage(context.id, "", 20)
+
+    if (!authUser) {
+      queueMicrotask(() => {
+        if (ignore) return;
+        const publicAttendees = getPublicEventAttendees(invite);
+        const visibleAttendees = publicAttendees.slice(
+          0,
+          EVENT_ATTENDEES_INITIAL_SIZE,
+        );
+        setEventAttendees(visibleAttendees);
+        setEventAttendeesCursor(String(visibleAttendees.length));
+        setEventAttendeesHasMore(
+          visibleAttendees.length < publicAttendees.length,
+        );
+        setEventAttendeesLoading(false);
+      });
+
+      return () => {
+        ignore = true;
+      };
+    }
+
+    queueMicrotask(() => {
+      if (ignore) return;
+      setEventAttendeesLoading(true);
+    });
+
+    fetchEventParticipantsPage(context.id, "", EVENT_ATTENDEES_PAGE_SIZE)
       .then((page) => {
         if (ignore) return;
         setEventAttendees(page.users);
@@ -851,10 +942,14 @@ function PublicInviteScreen() {
         if (!ignore) {
           const rawAttendees = invite.raw?.integrantes || [];
           setEventAttendees(
-            rawAttendees.slice(0, 20).map((item) => normalizeUserSummary(item)),
+            rawAttendees
+              .slice(0, EVENT_ATTENDEES_PAGE_SIZE)
+              .map((item) => normalizeUserSummary(item)),
           );
           setEventAttendeesCursor("");
-          setEventAttendeesHasMore(rawAttendees.length > 20);
+          setEventAttendeesHasMore(
+            rawAttendees.length > EVENT_ATTENDEES_PAGE_SIZE,
+          );
         }
       })
       .finally(() => {
@@ -864,7 +959,7 @@ function PublicInviteScreen() {
     return () => {
       ignore = true;
     };
-  }, [context.id, context.kind, invite.raw]);
+  }, [authUser, context.id, context.kind, invite]);
 
   const planUserIdsKey = [
     invite.hostId,
@@ -1018,6 +1113,17 @@ function PublicInviteScreen() {
     return () => window.clearTimeout(timeoutId);
   }, [flowStatus, isEventDetail, isReserva, planJoinMessage]);
 
+  useEffect(() => {
+    if (!isEvent || flowStatus !== "event-paid") return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      setPlanJoinMessage("");
+      setFlowStatus("idle");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [flowStatus, isEvent]);
+
   if (isComingSoonView) {
     return (
       <main className="coming-soon-shell">
@@ -1073,6 +1179,10 @@ function PublicInviteScreen() {
 
   if (inviteStatus === "loading") {
     return <PulLoader />;
+  }
+
+  if (eventFinished) {
+    return <EventFinishedNotice />;
   }
 
   if (notFoundKind) {
@@ -1376,9 +1486,18 @@ function PublicInviteScreen() {
   };
 
   /** Solicita al backend enviar confirmacion de compra y QR al correo del comprador. */
-  async function sendTicketEmail(purchase) {
+  async function sendTicketEmail(purchase, sessionId = "") {
     if (!EMAIL_CONFIRMATION_ENDPOINT || !purchase?.buyer?.email) return;
-    await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
+    const emailStorageKey = getEventPurchaseEmailStorageKey(
+      purchase.id,
+      purchase.paymentIntentId,
+      sessionId,
+    );
+    if (localStorage.getItem(emailStorageKey)) return;
+    localStorage.setItem(emailStorageKey, new Date().toISOString());
+
+    try {
+      await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
       to: purchase.buyer.email,
       template: "event-ticket-confirmation",
       purchase: {
@@ -1396,7 +1515,11 @@ function PublicInviteScreen() {
             ]
           : [],
       },
-    });
+      });
+    } catch (error) {
+      localStorage.removeItem(emailStorageKey);
+      throw error;
+    }
   }
 
   /** Une al usuario actual al plan o inicia solicitud/lista de espera segun reglas. */
@@ -1521,8 +1644,11 @@ function PublicInviteScreen() {
       const buyerName = buyer?.nombre || buyer?.displayName || "";
       const buyerEmail = buyer?.email || "";
       const buyerPhone = buyer?.telefono || buyer?.phone || "";
+      const purchaseAttemptId =
+        globalThis.crypto?.randomUUID?.() ||
+        `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const purchaseId =
-        `web-${invite.id}-${selectedItem.id}-${buyerEmail}`.replace(
+        `web-${invite.id}-${selectedItem.id}-${buyerEmail}-${purchaseAttemptId}`.replace(
           /[^a-zA-Z0-9_-]/g,
           "-",
         );
@@ -1565,6 +1691,8 @@ function PublicInviteScreen() {
         }),
         guest: isGuestPurchase,
         checkoutMode: isGuestPurchase ? "guest" : "authenticated",
+        captureMethod: isGuestPurchase ? "manual" : "automatic",
+        capture_method: isGuestPurchase ? "manual" : "automatic",
         idStripe: "",
         customer: null,
         customerEmail: buyerEmail,
@@ -1582,6 +1710,7 @@ function PublicInviteScreen() {
           buyer_name: buyerName,
           buyer_phone: buyerPhone,
           ticket_claim_code: ticketClaimCode,
+          capture_method: isGuestPurchase ? "manual" : "automatic",
         },
         successUrl: `${window.location.origin}${window.location.pathname}?eventId=${invite.id}&payment=success&session_id={CHECKOUT_SESSION_ID}`,
         cancelUrl: window.location.href,
@@ -1855,12 +1984,27 @@ function PublicInviteScreen() {
       return;
     }
 
+    if (!authUser) {
+      const publicAttendees = getPublicEventAttendees(invite);
+      const nextAttendees = publicAttendees.slice(
+        0,
+        Math.min(
+          eventAttendees.length + EVENT_ATTENDEES_PAGE_SIZE,
+          EVENT_PUBLIC_ATTENDEES_LIMIT,
+        ),
+      );
+      setEventAttendees(nextAttendees);
+      setEventAttendeesCursor(String(nextAttendees.length));
+      setEventAttendeesHasMore(nextAttendees.length < publicAttendees.length);
+      return;
+    }
+
     setEventAttendeesLoading(true);
     try {
       const page = await fetchEventParticipantsPage(
         context.id,
         eventAttendeesCursor,
-        50,
+        EVENT_ATTENDEES_PAGE_SIZE,
       );
       setEventAttendees((current) => {
         const next = new Map(current.map((user) => [user.id, user]));
