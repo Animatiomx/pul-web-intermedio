@@ -459,6 +459,98 @@ function buildPlanNotificationData(planId) {
   return { view: "DetailsPlan", id: planId };
 }
 
+function getLinkedEntityImage(plan = {}) {
+  const linked = plan.linkedEntity || {};
+  return (
+    linked.image ||
+    linked.fotoHome ||
+    linked.imagen ||
+    linked.fotos?.[0] ||
+    plan.image ||
+    plan.fotoHome ||
+    plan.imagen ||
+    ""
+  );
+}
+
+function getPlanEmailVariant(plan = {}) {
+  const linkedType =
+    plan.linkedEntity?.type || plan.linkedEntityType || plan.linkableType;
+  if (linkedType === "evento") return "event";
+  if (linkedType === "negocio") return "business";
+  return linkedType || getPlanOriginType(plan) || "";
+}
+
+async function buildPlanEmailFallback(plan, hostUser, status, targetUser) {
+  const planTitle = getPlanTitle(plan);
+  const hostName =
+    hostUser?.nombre ||
+    hostUser?.displayName ||
+    plan?.anfitrion?.nombre ||
+    "El anfitrión";
+  const linked = plan?.linkedEntity || {};
+  const acceptedStatuses = new Set(["request_accepted", "waitlist_accepted"]);
+  const membersById = new Map();
+
+  try {
+    const page = await fetchPlanMembersPage(plan?.id || "", "", 10);
+    page.users.forEach((member) => {
+      if (member?.id) membersById.set(member.id, member);
+    });
+  } catch (error) {
+    console.warn(`${DEBUG_PREFIX} No se pudieron cargar integrantes para correo`, {
+      planId: plan?.id,
+      error,
+    });
+  }
+
+  if (acceptedStatuses.has(status) && getUserId(targetUser)) {
+    const member = normalizeUserSummary(targetUser);
+    membersById.set(member.id, member);
+  }
+
+  const members = Array.from(membersById.values()).slice(0, 10);
+  const baseMembersCount = Number(
+    plan?.integrantesCount || plan?.integrantes?.length || members.length || 1,
+  );
+  const membersCount = acceptedStatuses.has(status)
+    ? Math.max(baseMembersCount, members.length, baseMembersCount + 1)
+    : Math.max(baseMembersCount, members.length, 1);
+
+  return {
+    enabled: true,
+    type: "plan",
+    id: plan?.id || "",
+    template: "plan-participation",
+    status,
+    actorName: hostName,
+    plan: {
+      id: plan?.id || "",
+      title: planTitle,
+      name: planTitle,
+      subtitle: linked.title || plan?.descripcion || planTitle,
+      emoji: plan?.emoji || linked.emoji || "",
+      image: getLinkedEntityImage(plan),
+      date: plan?.fecha || plan?.date || "",
+      time: plan?.hora || plan?.time || "",
+      people: plan?.personas || membersCount,
+      membersCount,
+      members,
+      address:
+        plan?.direccion ||
+        linked.address ||
+        plan?.address ||
+        "Ubicación por confirmar",
+      coordinates: plan?.coordenadas || linked.coordinates || plan?.coordinates,
+      url: `https://pul.com.mx/plan/${plan?.id || ""}`,
+      originType: plan?.origenTipo || plan?.originType || "",
+      planVariant: getPlanEmailVariant(plan),
+      hostName,
+      actorName: hostName,
+    },
+  };
+}
+
 /**
  * Notifica al anfitrion cuando un usuario cambia su participacion.
  */
@@ -509,37 +601,62 @@ async function notifyHostPlanParticipation(plan, user, status) {
 /**
  * Notifica al usuario cuando el anfitrion responde su solicitud o lista.
  */
-async function notifyUserPlanResolution(plan, user, status) {
+async function notifyUserPlanResolution(plan, user, status, hostUser) {
   const userId = getUserId(user);
   if (!userId) return;
 
   const planTitle = getPlanTitle(plan);
+  const hostName =
+    hostUser?.nombre ||
+    hostUser?.displayName ||
+    plan?.anfitrion?.nombre ||
+    "El anfitrión";
   const notifications = {
     requestAccepted: {
-      title: `Te aceptaron en el plan: ${planTitle}`,
+      title: `Te aceptaron tu solicitud: ${planTitle}`,
       message: "El anfitrión aceptó tu solicitud para unirte.",
     },
     requestRejected: {
-      title: `Solicitud rechazada: ${planTitle}`,
+      title: `Te rechazaron tu solicitud: ${planTitle}`,
       message: "El anfitrión no aceptó tu solicitud para este plan.",
     },
     waitlistAccepted: {
-      title: `Te aceptaron en el plan: ${planTitle}`,
+      title: `Aprobaron tu solicitud de lista de espera: ${planTitle}`,
       message: "El anfitrión te aceptó desde la lista de espera.",
     },
     waitlistRejected: {
-      title: `Lista de espera: ${planTitle}`,
+      title: `Rechazaron tu solicitud de lista de espera: ${planTitle}`,
       message: "El anfitrión no pudo darte un lugar en este plan.",
     },
   };
   const notification = notifications[status];
   if (!notification) return;
+  const emailStatusByResolution = {
+    requestAccepted: "request_accepted",
+    requestRejected: "request_rejected",
+    waitlistAccepted: "waitlist_accepted",
+    waitlistRejected: "waitlist_rejected",
+  };
+  const messageByResolution = {
+    requestAccepted: `${hostName} aceptó tu solicitud del plan ${planTitle}`,
+    requestRejected: `${hostName} rechazó tu solicitud del plan ${planTitle}`,
+    waitlistAccepted: `${hostName} aprobó tu solicitud de lista de espera del plan ${planTitle}`,
+    waitlistRejected: `${hostName} rechazó tu solicitud de lista de espera del plan ${planTitle}`,
+  };
 
   await sendOneSignalNotification(
     [userId],
     notification.title,
-    notification.message,
-    buildPlanNotificationData(plan.id),
+    messageByResolution[status] || notification.message,
+    {
+      ...buildPlanNotificationData(plan.id),
+      emailFallback: await buildPlanEmailFallback(
+        plan,
+        hostUser,
+        emailStatusByResolution[status],
+        user,
+      ),
+    },
   );
 }
 
@@ -1009,6 +1126,7 @@ export async function resolvePlanRequest(planId, hostUser, targetUser, action) {
       result.plan,
       targetUser,
       result.status === "accepted" ? "requestAccepted" : "requestRejected",
+      hostUser,
     );
   }
 
@@ -1093,6 +1211,7 @@ export async function resolveWaitlistUser(planId, hostUser, targetUser, action) 
       result.plan,
       targetUser,
       result.status === "accepted" ? "waitlistAccepted" : "waitlistRejected",
+      hostUser,
     );
   }
 

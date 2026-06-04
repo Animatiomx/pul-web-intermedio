@@ -12,6 +12,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import logo from "../../../assets/logo.png";
+import defaultAvatar from "../../../assets/default.png";
 import { auth, authPersistenceReady, db } from "../../../firebase";
 import {
   APP_STORE_URL,
@@ -201,7 +202,11 @@ function getPendingGuestPurchaseStorageKey(eventId) {
   return `pulPendingGuestEventPurchase:${eventId}`;
 }
 
-function getEventPurchaseEmailStorageKey(purchaseId, paymentIntentId, sessionId) {
+function getEventPurchaseEmailStorageKey(
+  purchaseId,
+  paymentIntentId,
+  sessionId,
+) {
   return `pulEventPurchaseEmail:${purchaseId || paymentIntentId || sessionId}`;
 }
 
@@ -388,7 +393,7 @@ function PublicInviteScreen() {
             displayName: profile?.nombre || firebaseUser.displayName,
             email: profile?.email || firebaseUser.email,
             photoURL: firebaseUser.photoURL,
-            method: "web-login",
+            method: profile?.method || "web-login",
           });
           const cached = localStorage.getItem("pulExpressUser");
           const cachedUser = cached ? JSON.parse(cached) : {};
@@ -539,14 +544,18 @@ function PublicInviteScreen() {
         const purchase = JSON.parse(storedPurchase);
         // Compra invitada: el navegador solo conserva el borrador. El backend
         // verifica Stripe y hace las escrituras criticas con permisos admin.
-        const completion = await postJson(EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT, {
-          sessionId,
-          purchase,
-        });
+        const completion = await postJson(
+          EVENT_GUEST_PURCHASE_COMPLETE_ENDPOINT,
+          {
+            sessionId,
+            purchase,
+          },
+        );
         const completedPurchase = {
           ...purchase,
           id: completion?.purchaseId || purchase.id,
-          paymentIntentId: completion?.paymentIntentId || purchase.paymentIntentId || "",
+          paymentIntentId:
+            completion?.paymentIntentId || purchase.paymentIntentId || "",
         };
         sessionStorage.setItem(
           getEventPurchaseStorageKey(eventId),
@@ -579,7 +588,8 @@ function PublicInviteScreen() {
           error,
         });
         setPlanJoinMessage(
-          error.message || "El pago fue aprobado, pero no pudimos registrar la compra.",
+          error.message ||
+            "El pago fue aprobado, pero no pudimos registrar la compra.",
         );
         setFlowStatus("purchase-error");
       }
@@ -877,11 +887,7 @@ function PublicInviteScreen() {
 
         setInviteIfChanged(
           setInvite,
-          normalizeEvent(
-            { fields: null, ...eventData },
-            snap.id,
-            context.kind,
-          ),
+          normalizeEvent({ fields: null, ...eventData }, snap.id, context.kind),
         );
         setInviteStatus("ready");
       },
@@ -1308,6 +1314,194 @@ function PublicInviteScreen() {
     return await response.json();
   };
 
+  /** Envia bienvenida al correo del usuario recien registrado sin bloquear el alta. */
+  const sendWelcomeEmail = async (user) => {
+    const email = user?.email?.trim();
+    if (!EMAIL_CONFIRMATION_ENDPOINT || !email) return;
+
+    try {
+      await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
+        to: email,
+        template: "welcome-user",
+        user: {
+          id: user.id || user.uid || "",
+          nombre: user.nombre || user.displayName || email.split("@")[0],
+          email,
+          downloadUrl: window.location.origin || "https://pul.com.mx",
+        },
+      });
+    } catch (error) {
+      console.warn(
+        `${DEBUG_PREFIX} Usuario registrado, pero no se pudo enviar bienvenida`,
+        error,
+      );
+    }
+  };
+
+  const isExpressRegisterUser = (user) =>
+    String(user?.method || "").trim() === "express-register";
+
+  const getPlanEmailTitle = (plan) => {
+    const originType = String(plan?.origenTipo || plan?.originType || "")
+      .trim()
+      .toLowerCase();
+    const isBusinessPlan =
+      plan?.planVariant === "business" ||
+      originType.includes("reserva") ||
+      originType.includes("reservacion") ||
+      Boolean(plan?.negocio?.nombre);
+    const isEventPlan =
+      plan?.planVariant === "event" ||
+      originType.includes("evento") ||
+      originType.includes("event") ||
+      Boolean(plan?.evento?.nombre);
+
+    if (isBusinessPlan) {
+      return (
+        plan?.negocio?.nombre || plan?.linkedEntity?.title || "Negocio PUL"
+      );
+    }
+    if (isEventPlan) {
+      return plan?.evento?.nombre || plan?.linkedEntity?.title || "Evento PUL";
+    }
+
+    return (
+      plan?.concepto ||
+      plan?.title ||
+      plan?.linkedEntity?.title ||
+      "Plan en PUL"
+    );
+  };
+
+  const getPlanEmailImage = (plan) =>
+    plan?.image ||
+    plan?.linkedEntity?.image ||
+    plan?.negocio?.imagen ||
+    plan?.negocio?.fotoHome ||
+    plan?.evento?.fotoHome ||
+    plan?.evento?.fotos?.[0] ||
+    "";
+
+  const getPlanEmailAddress = (plan) =>
+    plan?.address ||
+    plan?.direccion ||
+    plan?.linkedEntity?.address ||
+    plan?.negocio?.direccion ||
+    plan?.evento?.ubicacion ||
+    "";
+
+  const getPlanEmailCoordinates = (plan) =>
+    plan?.coordinates ||
+    plan?.coordenadas ||
+    plan?.negocio?.coordenadas ||
+    null;
+
+  const getAbsoluteAssetUrl = (assetUrl) => {
+    if (!assetUrl) return "";
+    if (/^https?:\/\//i.test(assetUrl)) return assetUrl;
+    const origin = window.location.origin || "https://pul.com.mx";
+    return `${origin}${assetUrl.startsWith("/") ? "" : "/"}${assetUrl}`;
+  };
+
+  const withDefaultAvatar = (member) => ({
+    ...member,
+    imagen:
+      member?.imagen || member?.photoURL || getAbsoluteAssetUrl(defaultAvatar),
+    defaultImage: getAbsoluteAssetUrl(defaultAvatar),
+  });
+
+  const getPlanEmailMembers = async (status) => {
+    const localMembers = [
+      ...(Array.isArray(invite.attendees) ? invite.attendees : []),
+      ...Array.from(planUsersById.values()),
+    ];
+    const byId = new Map(
+      localMembers
+        .map((member) => withDefaultAvatar(normalizeUserSummary(member)))
+        .filter((member) => member?.id)
+        .map((member) => [member.id, member]),
+    );
+
+    if (status === "joined" || status === "linked-joined") {
+      byId.set(
+        getUserId(authUser),
+        withDefaultAvatar(normalizeUserSummary(authUser)),
+      );
+    }
+
+    try {
+      const page = await fetchPlanMembersPage(invite.id, "", 10);
+      page.users.forEach((member) => {
+        if (member?.id) byId.set(member.id, withDefaultAvatar(member));
+      });
+    } catch (error) {
+      console.warn(
+        `${DEBUG_PREFIX} No se pudieron cargar integrantes para correo`,
+        error,
+      );
+    }
+
+    return Array.from(byId.values()).slice(0, 10);
+  };
+
+  /** Envia correo de participacion de plan solo a usuarios express-register. */
+  const sendPlanParticipationEmail = async (result) => {
+    const status = result?.status || "";
+    if (
+      !["joined", "linked-joined", "requested", "waitlisted"].includes(status)
+    ) {
+      return;
+    }
+    if (!isExpressRegisterUser(authUser) || !authUser?.email) return;
+
+    const plan = { ...invite.raw, ...invite, ...(result?.plan || {}) };
+    const members = await getPlanEmailMembers(status);
+
+    try {
+      await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
+        to: authUser.email,
+        template: "plan-participation",
+        status: status === "linked-joined" ? "joined" : status,
+        user: {
+          id: getUserId(authUser),
+          nombre: authUser.nombre || authUser.displayName || authUser.email,
+          email: authUser.email,
+        },
+        plan: {
+          id: invite.id,
+          title: getPlanEmailTitle(plan),
+          subtitle: plan?.concepto || "Plan en PUL",
+          emoji: plan.emoji || "",
+          planVariant: plan.planVariant || invite.planVariant || "",
+          originType:
+            plan.origenTipo || plan.originType || invite.origenTipo || "",
+          url: `https://pul.com.mx/plan/${invite.id}`,
+          image: getPlanEmailImage(plan),
+          date: plan.date || plan.fecha || invite.date || "",
+          time: plan.time || plan.hora || invite.time || "",
+          people:
+            plan.personas ||
+            plan.capacity ||
+            invite.capacity ||
+            invite.members ||
+            "",
+          membersCount:
+            plan.integrantesCount ||
+            invite.members ||
+            (Array.isArray(members) ? members.length : ""),
+          address: getPlanEmailAddress(plan),
+          coordinates: getPlanEmailCoordinates(plan),
+          members,
+        },
+      });
+    } catch (error) {
+      console.warn(
+        `${DEBUG_PREFIX} Participacion registrada, pero no se pudo enviar correo de plan`,
+        error,
+      );
+    }
+  };
+
   /** Recarga la pagina despues de cambios de sesion para leer valores frescos. */
   const reloadWithFreshSession = () => {
     window.requestAnimationFrame(() => {
@@ -1397,6 +1591,7 @@ function PublicInviteScreen() {
       console.log(userData);
 
       await registerUser(userData.id, userData);
+      await sendWelcomeEmail(userData);
 
       // FIRESTORE + LOGIN
       const firebaseUserLogin = await signInWithFirebasePassword(
@@ -1413,7 +1608,7 @@ function PublicInviteScreen() {
           registerForm.nombre.trim() ||
           registerForm.email.split("@")[0],
         email: firebaseUserLogin.email || loginForm.email.trim(),
-        method: "web-login",
+        method: "express-register",
         createdAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -1447,7 +1642,7 @@ function PublicInviteScreen() {
           firebaseUser.displayName ||
           loginForm.email.split("@")[0],
         email: firebaseUser.email || loginForm.email.trim(),
-        method: "web-login",
+        method: profile?.method || "web-login",
         createdAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -1498,23 +1693,23 @@ function PublicInviteScreen() {
 
     try {
       await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
-      to: purchase.buyer.email,
-      template: "event-ticket-confirmation",
-      purchase: {
-        ...purchase,
-        claimInstructions: purchase.ticketClaimCode
-          ? [
-              "Este identificador solo puede utilizarse una vez para asociar este boleto a una cuenta Pul.",
-              "Descarga la aplicación Pul.",
-              "Inicia sesión o crea cuenta.",
-              "Entra al menú.",
-              "Ve a Próximos Planes.",
-              "Abre la pestaña Eventos.",
-              "Selecciona Asignar boleto.",
-              "Captura el identificador recibido.",
-            ]
-          : [],
-      },
+        to: purchase.buyer.email,
+        template: "event-ticket-confirmation",
+        purchase: {
+          ...purchase,
+          claimInstructions: purchase.ticketClaimCode
+            ? [
+                "Este identificador solo puede utilizarse una vez para asociar este boleto a una cuenta Pul.",
+                "Descarga la aplicación Pul.",
+                "Inicia sesión o crea cuenta.",
+                "Entra al menú.",
+                "Ve a Próximos Planes.",
+                "Abre la pestaña Eventos.",
+                "Selecciona Asignar boleto.",
+                "Captura el identificador recibido.",
+              ]
+            : [],
+        },
       });
     } catch (error) {
       localStorage.removeItem(emailStorageKey);
@@ -1533,6 +1728,7 @@ function PublicInviteScreen() {
     setPlanJoinMessage("");
     try {
       const result = await joinPlanTransaction(invite.id, authUser);
+      await sendPlanParticipationEmail(result);
       setPlanJoinMessage(
         result?.message || "Listo, actualizamos tu participación en el plan.",
       );
@@ -1757,9 +1953,7 @@ function PublicInviteScreen() {
       );
       setFlowStatus("event-paid");
     } catch (error) {
-      if (
-        !STRIPE_CHECKOUT_ENDPOINT && !EMAIL_CONFIRMATION_ENDPOINT
-      ) {
+      if (!STRIPE_CHECKOUT_ENDPOINT && !EMAIL_CONFIRMATION_ENDPOINT) {
         await new Promise((resolve) => window.setTimeout(resolve, 900));
         await commitEventPurchase({
           event: { id: invite.id, ...invite.raw },
