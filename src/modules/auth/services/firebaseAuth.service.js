@@ -32,6 +32,8 @@ export function getFirebaseAuthErrorMessage(error) {
       "No pudimos conectar con Firebase. Revisa tu conexión e intenta de nuevo.",
     "auth/user-disabled":
       "Esta cuenta está deshabilitada. Contacta a soporte para revisarla.",
+    "pul/user-profile-not-found":
+      "Encontramos una cuenta asociada a este acceso en Pul, pero no corresponde a un usuario. Si necesitas ayuda, contacta a soporte para que revisen tu cuenta.",
   };
 
   const matchedCode = Object.keys(messages).find((item) =>
@@ -65,7 +67,11 @@ export async function signInWithFirebasePassword(email, password) {
  */
 export async function signUpWithFirebasePassword(email, password) {
   await authPersistenceReady;
-  const credential = await createUserWithEmailAndPassword(auth, email, password);
+  const credential = await createUserWithEmailAndPassword(
+    auth,
+    email,
+    password,
+  );
   const token = await credential.user.getIdToken();
   return {
     localId: credential.user.uid,

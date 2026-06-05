@@ -349,6 +349,7 @@ function PublicInviteScreen() {
     integrantes: [],
     solicitudes: [],
   });
+  const expressRegistrationInProgressRef = useRef(false);
 
   const showNotFound = useCallback(
     (kind = context.kind) => {
@@ -384,6 +385,14 @@ function PublicInviteScreen() {
 
           const token = await firebaseUser.getIdToken();
           const profile = await fetchUserProfile(firebaseUser.uid);
+          if (!profile) {
+            if (expressRegistrationInProgressRef.current) return;
+            await signOut(auth).catch(() => {});
+            localStorage.removeItem("pulExpressUser");
+            sessionStorage.removeItem("pulExpressUser");
+            setAuthUser(null);
+            return;
+          }
           const nextUser = buildWebUserSummary({
             ...profile,
             id: firebaseUser.uid,
@@ -1725,6 +1734,7 @@ function PublicInviteScreen() {
       }
 
       setFlowStatus("registering");
+      expressRegistrationInProgressRef.current = true;
 
       const firebaseUser = await signUpWithFirebasePassword(
         registerForm.email.trim().toLowerCase(),
@@ -1760,6 +1770,7 @@ function PublicInviteScreen() {
 
       await registerUser(userData.id, userData);
       await sendWelcomeEmail(userData);
+      expressRegistrationInProgressRef.current = false;
 
       // FIRESTORE + LOGIN
       const firebaseUserLogin = await signInWithFirebasePassword(
@@ -1780,6 +1791,7 @@ function PublicInviteScreen() {
         createdAt: new Date().toISOString(),
       });
     } catch (error) {
+      expressRegistrationInProgressRef.current = false;
       setFlowStatus("register-error");
 
       setErrors({ form: getFirebaseAuthErrorMessage(error) });
@@ -1800,6 +1812,12 @@ function PublicInviteScreen() {
         loginForm.password,
       );
       const profile = await fetchUserProfile(firebaseUser.localId);
+      if (!profile) {
+        await signOut(auth).catch(() => {});
+        localStorage.removeItem("pulExpressUser");
+        sessionStorage.removeItem("pulExpressUser");
+        throw { code: "pul/user-profile-not-found" };
+      }
       completeAuth({
         ...profile,
         id: firebaseUser.localId,
