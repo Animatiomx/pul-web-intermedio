@@ -217,6 +217,47 @@ function getPublicEventAttendees(invite) {
     .filter(Boolean);
 }
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function addSearchPrefixes(tokens, value) {
+  const normalized = normalizeSearchText(value);
+  if (!normalized) return;
+
+  tokens.add(normalized);
+
+  if (normalized.length < 4) return;
+
+  for (let i = 4; i <= normalized.length; i += 1) {
+    tokens.add(normalized.slice(0, i).trim());
+  }
+}
+
+function buildNameSearchTokens(name) {
+  const normalizedName = normalizeSearchText(name);
+  const words = normalizedName.split(" ").filter(Boolean);
+  const tokens = new Set();
+
+  addSearchPrefixes(tokens, normalizedName);
+
+  words.forEach((word) => addSearchPrefixes(tokens, word));
+
+  for (let start = 0; start < words.length; start += 1) {
+    for (let end = start + 1; end <= words.length; end += 1) {
+      addSearchPrefixes(tokens, words.slice(start, end).join(" "));
+    }
+  }
+
+  return Array.from(tokens).filter(Boolean);
+}
+
 /**
  * Loader comun mientras se resuelve invitacion o sesion.
  */
@@ -1762,8 +1803,9 @@ function PublicInviteScreen() {
         email: firebaseUser.email || registerForm.email.trim().toLowerCase(),
         telefono: registerForm.telefono.trim(),
         method: "express-register",
+        fueExpress: true,
         createdAt: new Date().toISOString(),
-        nombreBusqueda: [registerForm.nombre.trim()],
+        nombreBusqueda: buildNameSearchTokens(registerForm.nombre.trim()),
       };
 
       console.log(userData);
