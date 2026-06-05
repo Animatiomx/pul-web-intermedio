@@ -606,6 +606,9 @@ function PublicInviteScreen() {
           id: completion?.purchaseId || purchase.id,
           paymentIntentId:
             completion?.paymentIntentId || purchase.paymentIntentId || "",
+          publicDetailUrl: `https://pul.com.mx/eventodetalle/${
+            completion?.purchaseId || purchase.id
+          }`,
         };
         sessionStorage.setItem(
           getEventPurchaseStorageKey(eventId),
@@ -1572,7 +1575,10 @@ function PublicInviteScreen() {
       );
     }
 
-    byId.set(getUserId(authUser), withDefaultAvatar(normalizeUserSummary(authUser)));
+    byId.set(
+      getUserId(authUser),
+      withDefaultAvatar(normalizeUserSummary(authUser)),
+    );
 
     return Array.from(byId.values()).slice(0, 10);
   };
@@ -1646,7 +1652,11 @@ function PublicInviteScreen() {
 
   /** Envia correo de union a detalle de evento solo a usuarios express-register. */
   const sendEventDetailParticipationEmail = async (result) => {
-    if (!isEventDetail || !isExpressRegisterUser(authUser) || !authUser?.email) {
+    if (
+      !isEventDetail ||
+      !isExpressRegisterUser(authUser) ||
+      !authUser?.email
+    ) {
       return;
     }
 
@@ -1684,7 +1694,10 @@ function PublicInviteScreen() {
           date: event.fechaString || eventDetail.fecha || invite.date || "",
           time: event.horaInicio || eventDetail.hora || invite.time || "",
           endDate:
-            event.fechaStringFin || eventDetail.fechaFin || invite.endDate || "",
+            event.fechaStringFin ||
+            eventDetail.fechaFin ||
+            invite.endDate ||
+            "",
           endTime: event.horaFin || eventDetail.horaFin || invite.endTime || "",
           people:
             eventDetail.personas ||
@@ -2105,6 +2118,7 @@ function PublicInviteScreen() {
           telefono: buyerPhone,
         },
         ticketClaimCode,
+        publicDetailUrl: `https://pul.com.mx/eventodetalle/${purchaseId}`,
         eventPurchaseDraft,
         qrPayload: JSON.stringify({
           eventId: invite.id,

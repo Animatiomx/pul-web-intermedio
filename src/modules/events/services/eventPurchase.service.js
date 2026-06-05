@@ -9,7 +9,8 @@ import { db } from "../../../firebase";
 import { getUserId } from "../../../shared/utils/users";
 
 const CLAIM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const CLAIM_LENGTH = 10;
+const CLAIM_GROUP_LENGTH = 4;
+const CLAIM_GROUPS = 2;
 
 /**
  * Genera un indice aleatorio compatible con browsers con o sin Web Crypto.
@@ -24,9 +25,12 @@ function getRandomInt(max) {
 }
 
 export function generateTicketClaimCode() {
-  return Array.from({ length: CLAIM_LENGTH }, () =>
-    CLAIM_ALPHABET[getRandomInt(CLAIM_ALPHABET.length)],
-  ).join("");
+  return Array.from({ length: CLAIM_GROUPS }, () =>
+    Array.from(
+      { length: CLAIM_GROUP_LENGTH },
+      () => CLAIM_ALPHABET[getRandomInt(CLAIM_ALPHABET.length)],
+    ).join(""),
+  ).join("-");
 }
 
 /**
@@ -81,7 +85,8 @@ function buildEventSnapshot(event) {
     nombre: event.nombre || event.title || "",
     ubicacion: event.ubicacion || event.address || "",
     fechaString: event.fechaString || event.date || "",
-    fechaStringFin: event.fechaStringFin || event.endDate || event.fechaString || "",
+    fechaStringFin:
+      event.fechaStringFin || event.endDate || event.fechaString || "",
     horaInicio: event.horaInicio || event.time || "",
     horaFin: event.horaFin || event.endTime || "",
     fotoHome: event.fotoHome || event.image || "",
@@ -118,7 +123,9 @@ function getItemAmount(type, item, quantity) {
 
 function getItemId(item) {
   const raw = item?.raw || item || {};
-  return raw.id || raw.idAlternativo || raw.noMesa || item?.id || item?.name || "";
+  return (
+    raw.id || raw.idAlternativo || raw.noMesa || item?.id || item?.name || ""
+  );
 }
 
 /**
@@ -187,7 +194,8 @@ export function buildEventPurchaseDraft({
     quantity: normalizedQuantity,
     event: eventSnapshot,
   };
-  if (type === "ticket") eventPurchase.boleto = getTicketPayload(item, quantity);
+  if (type === "ticket")
+    eventPurchase.boleto = getTicketPayload(item, quantity);
   if (type === "zona") eventPurchase.mesa = getMesaPayload(item);
 
   return {
@@ -221,7 +229,9 @@ export function buildEventPurchaseDraft({
           },
     fecha: eventSnapshot.fechaString,
     hora: eventSnapshot.horaInicio,
-    dateTime: new Date(`${eventSnapshot.fechaString} ${eventSnapshot.horaInicio}`),
+    dateTime: new Date(
+      `${eventSnapshot.fechaString} ${eventSnapshot.horaInicio}`,
+    ),
     cuenta,
     cuentaPorCobrar: false,
     paymentRequestStatus: "complete",
@@ -302,7 +312,9 @@ export async function commitEventPurchase({
     ticketClaimCode,
     paymentIntentId,
   });
-  const claimRef = ticketClaimCode ? doc(db, "ticketClaims", ticketClaimCode) : null;
+  const claimRef = ticketClaimCode
+    ? doc(db, "ticketClaims", ticketClaimCode)
+    : null;
 
   await runTransaction(db, async (transaction) => {
     const eventSnap = await transaction.get(eventRef);
@@ -312,7 +324,9 @@ export async function commitEventPurchase({
       : null;
     if (!eventSnap.exists()) throw new Error("El evento ya no existe.");
     if (claimSnap?.exists()) {
-      throw new Error("El identificador de boleto ya existe. Intenta de nuevo.");
+      throw new Error(
+        "El identificador de boleto ya existe. Intenta de nuevo.",
+      );
     }
 
     const eventData = eventSnap.data();
@@ -341,7 +355,10 @@ export async function commitEventPurchase({
         return { ...ticket, disponibles: available - normalizedQuantity };
       });
       if (!foundTicket) throw new Error("El boleto seleccionado ya no existe.");
-      transaction.update(eventRef, { boletosTipo, updatedAt: serverTimestamp() });
+      transaction.update(eventRef, {
+        boletosTipo,
+        updatedAt: serverTimestamp(),
+      });
     }
 
     if (type === "zona") {
@@ -416,7 +433,9 @@ export async function commitEventPurchase({
  * `integrantesCount` si el integrante no existia previamente.
  */
 export async function redeemTicketClaimCode(code, user) {
-  const normalizedCode = String(code || "").trim().toUpperCase();
+  const normalizedCode = String(code || "")
+    .trim()
+    .toUpperCase();
   const userId = getUserId(user);
   if (!normalizedCode || !userId) {
     throw new Error("No se pudo identificar el código o el usuario.");
@@ -466,7 +485,10 @@ export async function redeemTicketClaimCode(code, user) {
     const member = buildMember(user, userId);
     const replaceMember = (members = []) => {
       const next = members
-        .filter((item) => item?.id && item.id !== previousGuestId && item.id !== userId)
+        .filter(
+          (item) =>
+            item?.id && item.id !== previousGuestId && item.id !== userId,
+        )
         .concat(member);
       return next;
     };
