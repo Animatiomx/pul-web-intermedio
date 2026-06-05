@@ -1339,7 +1339,9 @@ function PublicInviteScreen() {
   };
 
   const isExpressRegisterUser = (user) =>
-    String(user?.method || "").trim() === "express-register";
+    ["express-register", "register-espress"].includes(
+      String(user?.method || "").trim(),
+    );
 
   const getPlanEmailTitle = (plan) => {
     const originType = String(plan?.origenTipo || plan?.originType || "")
@@ -1497,6 +1499,172 @@ function PublicInviteScreen() {
     } catch (error) {
       console.warn(
         `${DEBUG_PREFIX} Participacion registrada, pero no se pudo enviar correo de plan`,
+        error,
+      );
+    }
+  };
+
+  const getReservationEmailMembers = (reservation, joinedMember) => {
+    const byId = new Map();
+    const sourceMembers = Array.isArray(reservation?.integrantes)
+      ? reservation.integrantes
+      : [];
+
+    sourceMembers
+      .map((member) => withDefaultAvatar(normalizeUserSummary(member)))
+      .filter((member) => member?.id)
+      .forEach((member) => byId.set(member.id, member));
+
+    if (joinedMember?.id) {
+      byId.set(
+        joinedMember.id,
+        withDefaultAvatar(normalizeUserSummary(joinedMember)),
+      );
+    }
+
+    byId.set(getUserId(authUser), withDefaultAvatar(normalizeUserSummary(authUser)));
+
+    return Array.from(byId.values()).slice(0, 10);
+  };
+
+  /** Envia correo de union a reserva solo a usuarios express-register. */
+  const sendReservationParticipationEmail = async (result) => {
+    if (!isReserva || !isExpressRegisterUser(authUser) || !authUser?.email) {
+      return;
+    }
+
+    const reservation = { ...invite.raw, ...(result?.reservation || {}) };
+    const business = reservation.negocio || {};
+    const host = reservation.anfitrion || {};
+    const members = getReservationEmailMembers(reservation, result?.member);
+
+    try {
+      await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
+        to: authUser.email,
+        template: "reservation-participation",
+        user: {
+          id: getUserId(authUser),
+          nombre: authUser.nombre || authUser.displayName || authUser.email,
+          email: authUser.email,
+        },
+        reservation: {
+          id: invite.id,
+          businessName: business.nombre || invite.title || "Reservación PUL",
+          hostName: host.nombre || "el anfitrión",
+          url: `https://pul.com.mx/reserva/${invite.id}`,
+          image:
+            business.imagen ||
+            business.fotoHome ||
+            business.logo ||
+            business.fotos?.[0] ||
+            invite.image ||
+            "",
+          date: reservation.fecha || invite.date || "",
+          time: reservation.hora || invite.time || "",
+          people:
+            reservation.noPersonas ||
+            reservation.personas ||
+            invite.participants ||
+            invite.members ||
+            "",
+          membersCount:
+            reservation.integrantesCount ||
+            reservation.integrantesIds?.length ||
+            members.length,
+          address:
+            business.direccion ||
+            business.ubicacion ||
+            reservation.direccion ||
+            invite.address ||
+            "",
+          coordinates:
+            business.coordenadas ||
+            business.coordinates ||
+            reservation.coordenadas ||
+            reservation.coordinates ||
+            null,
+          members,
+        },
+      });
+    } catch (error) {
+      console.warn(
+        `${DEBUG_PREFIX} Usuario unido a reserva, pero no se pudo enviar correo`,
+        error,
+      );
+    }
+  };
+
+  /** Envia correo de union a detalle de evento solo a usuarios express-register. */
+  const sendEventDetailParticipationEmail = async (result) => {
+    if (!isEventDetail || !isExpressRegisterUser(authUser) || !authUser?.email) {
+      return;
+    }
+
+    const eventDetail = { ...invite.raw, ...(result?.eventDetail || {}) };
+    const event = eventDetail.evento || eventDetail.eventPurchase?.event || {};
+    const host = eventDetail.anfitrion || {};
+    const members = getReservationEmailMembers(eventDetail, result?.member);
+
+    try {
+      await postJson(EMAIL_CONFIRMATION_ENDPOINT, {
+        to: authUser.email,
+        template: "reservation-participation",
+        user: {
+          id: getUserId(authUser),
+          nombre: authUser.nombre || authUser.displayName || authUser.email,
+          email: authUser.email,
+        },
+        reservation: {
+          id: invite.id,
+          kind: "evento",
+          sourceType: "event",
+          isEvent: true,
+          itemTypeLabel: "evento",
+          businessName: event.nombre || invite.title || "Evento PUL",
+          hostName: host.nombre || "el anfitrión",
+          url: `https://pul.com.mx/eventodetalle/${invite.id}`,
+          image:
+            event.fotoHome ||
+            event.imagen ||
+            event.image ||
+            event.fotos?.[0] ||
+            eventDetail.negocio?.imagen ||
+            invite.image ||
+            "",
+          date: event.fechaString || eventDetail.fecha || invite.date || "",
+          time: event.horaInicio || eventDetail.hora || invite.time || "",
+          endDate:
+            event.fechaStringFin || eventDetail.fechaFin || invite.endDate || "",
+          endTime: event.horaFin || eventDetail.horaFin || invite.endTime || "",
+          people:
+            eventDetail.personas ||
+            eventDetail.noPersonas ||
+            invite.participants ||
+            invite.members ||
+            "",
+          membersCount:
+            eventDetail.integrantesCount ||
+            eventDetail.integrantesIds?.length ||
+            members.length,
+          address:
+            event.ubicacion ||
+            event.address ||
+            eventDetail.ubicacion ||
+            eventDetail.negocio?.direccion ||
+            invite.address ||
+            "",
+          coordinates:
+            event.coordenadas ||
+            event.coordinates ||
+            eventDetail.coordenadas ||
+            eventDetail.coordinates ||
+            null,
+          members,
+        },
+      });
+    } catch (error) {
+      console.warn(
+        `${DEBUG_PREFIX} Usuario unido a evento, pero no se pudo enviar correo`,
         error,
       );
     }
@@ -2232,6 +2400,11 @@ function PublicInviteScreen() {
           ? "Ya formas parte de este evento."
           : "Ya formas parte de esta reservación.",
       );
+      if (!isEventDetail) {
+        await sendReservationParticipationEmail(result);
+      } else {
+        await sendEventDetailParticipationEmail(result);
+      }
       if (
         !isEventDetail &&
         result?.reservation?.anfitrion?.id &&

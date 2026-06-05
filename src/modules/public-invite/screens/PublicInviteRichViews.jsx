@@ -52,6 +52,12 @@ function ReservationIcon({ name }) {
         <path d="M3 10h18" />
       </svg>
     ),
+    clock: (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+    ),
     map: (
       <svg {...common}>
         <path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z" />
@@ -771,6 +777,7 @@ export function ReservationPublicView({
     ? individualProducts
     : generalProducts;
   const summaryAccount = showingIndividual ? individualSummary : account;
+  const showProductsSection = !limitedPublicView && !isEventDetail;
 
   return (
     <main className="mobile-detail-shell reservation-detail-shell">
@@ -1035,9 +1042,26 @@ export function ReservationPublicView({
               {capacity || "Por confirmar"}
               {mesa.zona ? ` · ${mesa.zona}` : ""}
             </InfoRow>
-            <InfoRow icon="calendar" label="Fecha">
-              {formatInviteDate(invite)}
-            </InfoRow>
+            {isEventDetail ? (
+              <>
+                <InfoRow icon="calendar" label="Fecha de inicio">
+                  {invite.date || "Por confirmar"}
+                </InfoRow>
+                <InfoRow icon="calendar" label="Fecha fin">
+                  {invite.endDate || "Por confirmar"}
+                </InfoRow>
+                <InfoRow icon="clock" label="Hora inicio">
+                  {invite.time || "Por confirmar"}
+                </InfoRow>
+                <InfoRow icon="clock" label="Hora fin">
+                  {invite.endTime || "Por confirmar"}
+                </InfoRow>
+              </>
+            ) : (
+              <InfoRow icon="calendar" label="Fecha">
+                {formatInviteDate(invite)}
+              </InfoRow>
+            )}
             <InfoRow
               icon="map"
               label="Ubicación"
@@ -1077,7 +1101,7 @@ export function ReservationPublicView({
           </section>
         )}
 
-        {!limitedPublicView && (
+        {showProductsSection && (
           <section className="mobile-section reservation-products-section">
             <div className="mobile-section-head">
               <h2>Productos</h2>
@@ -1128,12 +1152,14 @@ export function ReservationPublicView({
                 {formatCurrency(getAccountAmount(summaryAccount, "subtotal"))}
               </strong>
             </div>
-            <div className="mobile-total-row">
-              <span>Propina</span>
-              <strong>
-                {formatCurrency(getAccountAmount(summaryAccount, "propina"))}
-              </strong>
-            </div>
+            {!isEventDetail && (
+              <div className="mobile-total-row">
+                <span>Propina</span>
+                <strong>
+                  {formatCurrency(getAccountAmount(summaryAccount, "propina"))}
+                </strong>
+              </div>
+            )}
             <div className="mobile-total-row">
               <span>Comisión Stripe</span>
               <strong>
