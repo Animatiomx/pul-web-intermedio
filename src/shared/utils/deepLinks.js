@@ -22,11 +22,41 @@ function getDeepLinkBase(kind) {
 }
 
 /**
+ * Devuelve el segmento configurado en la app nativa para cada pantalla.
+ */
+function getNativeRouteSegment(kind) {
+  if (kind === "event") return "evento";
+  if (kind === "eventDetail") return "eventodetalle";
+  if (kind === "reserva") return "reserva";
+  return "plan";
+}
+
+function stripTrailingSlashes(base) {
+  let normalizedBase = String(base || "").trim();
+  while (normalizedBase.endsWith("/") && !normalizedBase.endsWith("://")) {
+    normalizedBase = normalizedBase.slice(0, -1);
+  }
+  return normalizedBase;
+}
+
+function appendPathSegment(base, segment) {
+  return base.endsWith("://") ? `${base}${segment}` : `${base}/${segment}`;
+}
+
+/**
  * Construye deep links seguros escapando el identificador de ruta.
  */
-function buildRouteDeepLink(base, id) {
-  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
-  return `${normalizedBase}${encodeURIComponent(id)}`;
+function buildRouteDeepLink(base, id, kind) {
+  const routeSegment = getNativeRouteSegment(kind);
+  const normalizedBase = stripTrailingSlashes(base);
+  const normalizedBaseLower = normalizedBase.toLowerCase();
+  const baseWithRoute =
+    normalizedBaseLower.endsWith(`://${routeSegment}`) ||
+    normalizedBaseLower.endsWith(`/${routeSegment}`)
+      ? normalizedBase
+      : appendPathSegment(normalizedBase, routeSegment);
+
+  return appendPathSegment(baseWithRoute, encodeURIComponent(id));
 }
 
 /**
@@ -35,7 +65,7 @@ function buildRouteDeepLink(base, id) {
 export function getInviteDeepLink(invite) {
   if (!invite.id) return;
 
-  return buildRouteDeepLink(getDeepLinkBase(invite.kind), invite.id);
+  return buildRouteDeepLink(getDeepLinkBase(invite.kind), invite.id, invite.kind);
 }
 
 /**
