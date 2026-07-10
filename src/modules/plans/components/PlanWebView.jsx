@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import defaultAvatar from "../../../assets/default.png";
 import logo from "../../../assets/logopul.png";
 import { getUserId, normalizeUserSummary } from "../../../shared/utils/users";
@@ -6,6 +6,27 @@ import {
   formatPlanDate,
   formatPlanVisibility,
 } from "../../../shared/utils/formatters";
+
+function scrollAuthTargetIntoView(refs) {
+  const scroll = () => {
+    const target =
+      refs
+        .map((ref) => ref.current)
+        .find((element) => element && element.getClientRects().length > 0) ||
+      refs.find((ref) => ref.current)?.current;
+
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  if (typeof window === "undefined" || !window.requestAnimationFrame) {
+    scroll();
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(scroll);
+  });
+}
 
 /**
  * Iconos SVG locales para evitar agregar dependencias y mantener la vista ligera.
@@ -373,6 +394,8 @@ export default function PlanWebView({
   const [attendeesHasMore, setAttendeesHasMore] = useState(true);
   const [attendeesLoading, setAttendeesLoading] = useState(false);
   const [attendeesError, setAttendeesError] = useState("");
+  const mobileAuthPanelRef = useRef(null);
+  const desktopAuthPanelRef = useRef(null);
   const userId = getUserId(authUser);
   const memberIds = invite.integrantesIds || [];
   const requestIds = invite.solicitudesIds || [];
@@ -437,6 +460,11 @@ export default function PlanWebView({
   const showAuthSide =
     !authUser &&
     (view === "register" || view === "login" || view === "recover-password");
+
+  const openAuthView = (nextView) => {
+    setView(nextView);
+    scrollAuthTargetIntoView([mobileAuthPanelRef, desktopAuthPanelRef]);
+  };
 
   const loadNextAttendeesPage = async () => {
     if (
@@ -590,14 +618,14 @@ export default function PlanWebView({
               <button
                 className="primary-button"
                 type="button"
-                onClick={() => setView("register")}
+                onClick={() => openAuthView("register")}
               >
                 Registrarme para unirme
               </button>
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setView("login")}
+                onClick={() => openAuthView("login")}
               >
                 Iniciar sesión
               </button>
@@ -621,10 +649,10 @@ export default function PlanWebView({
           (view === "register" ||
             view === "login" ||
             view === "recover-password") && (
-          <div className="plan-web-mobile-auth">
+          <div className="plan-web-mobile-auth" ref={mobileAuthPanelRef}>
             <PlanAuthPanel
               view={view}
-              setView={setView}
+              setView={openAuthView}
               errors={errors}
               registerForm={registerForm}
               loginForm={loginForm}
@@ -799,10 +827,10 @@ export default function PlanWebView({
 
         {showAuthSide && (
           <aside className="plan-web-side">
-            <div className="plan-web-desktop-auth">
+            <div className="plan-web-desktop-auth" ref={desktopAuthPanelRef}>
               <PlanAuthPanel
                 view={view}
-                setView={setView}
+                setView={openAuthView}
                 errors={errors}
                 registerForm={registerForm}
                 loginForm={loginForm}
@@ -863,7 +891,7 @@ export default function PlanWebView({
                   type="button"
                   onClick={() => {
                     setAttendeesOpen(false);
-                    setView("login");
+                    openAuthView("login");
                   }}
                 >
                   Iniciar sesión

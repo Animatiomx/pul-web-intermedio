@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Elements,
   PaymentElement,
@@ -19,6 +19,27 @@ import {
 } from "../../reservations/services/reservationParticipation.service";
 
 const EVENT_PUBLIC_ATTENDEES_LIMIT = 50;
+
+function scrollAuthTargetIntoView(refs) {
+  const scroll = () => {
+    const target =
+      refs
+        .map((ref) => ref.current)
+        .find((element) => element && element.getClientRects().length > 0) ||
+      refs.find((ref) => ref.current)?.current;
+
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  if (typeof window === "undefined" || !window.requestAnimationFrame) {
+    scroll();
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(scroll);
+  });
+}
 
 /**
  * Iconos locales usados por las vistas ricas sin cargar una libreria extra.
@@ -702,6 +723,8 @@ export function ReservationPublicView({
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [mesaDetailOpen, setMesaDetailOpen] = useState(false);
   const [accountMode, setAccountMode] = useState("general");
+  const mobileAuthPanelRef = useRef(null);
+  const desktopAuthPanelRef = useRef(null);
   const reservation = invite.raw || {};
   const event = reservation.evento || reservation.eventPurchase?.event || {};
   const venue = isEventDetail
@@ -762,6 +785,10 @@ export function ReservationPublicView({
       mesa.consumominimo,
     );
   const hasVisibleMesa = hasMesa && mesa.zona !== "cover";
+  const openAuthView = (nextView) => {
+    setView(nextView);
+    scrollAuthTargetIntoView([mobileAuthPanelRef, desktopAuthPanelRef]);
+  };
   const generalProducts = Array.isArray(reservation.productos)
     ? reservation.productos
     : Array.isArray(account.productos)
@@ -856,7 +883,7 @@ export function ReservationPublicView({
           </section>
         ) : (
           <ReservationAuthPrompt
-            setView={setView}
+            setView={openAuthView}
             memberCount={memberIds.length}
             capacity={capacity}
             availableSpots={availableSpots}
@@ -867,10 +894,10 @@ export function ReservationPublicView({
           (view === "login" ||
             view === "register" ||
             view === "recover-password") && (
-            <div className="reservation-auth-mobile-slot">
+            <div className="reservation-auth-mobile-slot" ref={mobileAuthPanelRef}>
               <ReservationAuthPanel
                 view={view}
-                setView={setView}
+                setView={openAuthView}
                 errors={errors}
                 registerForm={registerForm}
                 loginForm={loginForm}
@@ -983,7 +1010,7 @@ export function ReservationPublicView({
                 <button
                   className="primary-button compact"
                   type="button"
-                  onClick={() => setView("login")}
+                  onClick={() => openAuthView("login")}
                 >
                   Entrar
                 </button>
@@ -1017,10 +1044,10 @@ export function ReservationPublicView({
           (view === "login" ||
             view === "register" ||
             view === "recover-password") && (
-            <div className="reservation-auth-desktop-slot">
+            <div className="reservation-auth-desktop-slot" ref={desktopAuthPanelRef}>
               <ReservationAuthPanel
                 view={view}
-                setView={setView}
+                setView={openAuthView}
                 errors={errors}
                 registerForm={registerForm}
                 loginForm={loginForm}
@@ -1685,6 +1712,7 @@ export function EventPublicView({
   const [selectedTable, setSelectedTable] = useState(null);
   const [attendeesModalOpen, setAttendeesModalOpen] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState("description");
+  const eventAuthPanelRef = useRef(null);
   const attendeesCount =
     event.integrantesCount ||
     event.integrantesIds?.length ||
@@ -1723,6 +1751,11 @@ export function EventPublicView({
     !authUser &&
     eventAttendees.length >= EVENT_PUBLIC_ATTENDEES_LIMIT &&
     attendeesCount > eventAttendees.length;
+
+  const openAuthView = (nextView) => {
+    setView(nextView);
+    scrollAuthTargetIntoView([eventAuthPanelRef]);
+  };
 
   const moveImage = (direction) => {
     if (!images.length) return;
@@ -1913,7 +1946,10 @@ export function EventPublicView({
           </div>
         </article>
 
-        <article className="event-web-section event-auth-section">
+        <article
+          className="event-web-section event-auth-section"
+          ref={eventAuthPanelRef}
+        >
           {authUser ? (
             <>
               <div className="event-account-head">
@@ -1955,7 +1991,7 @@ export function EventPublicView({
             view === "recover-password" ? (
             <ReservationAuthPanel
               view={view}
-              setView={setView}
+              setView={openAuthView}
               errors={errors}
               registerForm={registerForm}
               loginForm={loginForm}
@@ -1970,7 +2006,7 @@ export function EventPublicView({
             />
           ) : (
             <ReservationAuthPrompt
-              setView={setView}
+              setView={openAuthView}
               memberCount={attendeesCount}
               capacity={invite.capacity || 0}
               availableSpots={null}
@@ -2291,7 +2327,7 @@ export function EventPublicView({
                   type="button"
                   onClick={() => {
                     setAttendeesModalOpen(false);
-                    setView("login");
+                    openAuthView("login");
                   }}
                 >
                   Iniciar sesión

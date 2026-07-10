@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import defaultAvatar from "../../../assets/default.png";
 import logo from "../../../assets/logopul.png";
 import {
@@ -13,6 +14,21 @@ import {
   EventPublicView,
   ReservationPublicView,
 } from "./PublicInviteRichViews";
+
+function scrollInviteTargetIntoView(ref) {
+  const scroll = () => {
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  if (typeof window === "undefined" || !window.requestAnimationFrame) {
+    scroll();
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(scroll);
+  });
+}
 
 /**
  * Vista publica legacy para eventos, reservas y fallback de planes.
@@ -84,6 +100,13 @@ export default function PublicInviteView({
   acceptAndPay,
   joinCurrentPlan,
 }) {
+  const actionPanelRef = useRef(null);
+
+  const openActionView = (nextView) => {
+    setView(nextView);
+    scrollInviteTargetIntoView(actionPanelRef);
+  };
+
   if (isReserva || isEventDetail) {
     return (
       <ReservationPublicView
@@ -463,7 +486,7 @@ export default function PublicInviteView({
                     <button
                       className="secondary-button"
                       type="button"
-                      onClick={() => setView("login")}
+                      onClick={() => openActionView("login")}
                     >
                       Iniciar sesión
                     </button>
@@ -491,7 +514,7 @@ export default function PublicInviteView({
                       className="secondary-button"
                       type="button"
                       onClick={() =>
-                        authUser ? rejectInvitation() : setView("login")
+                        authUser ? rejectInvitation() : openActionView("login")
                       }
                     >
                       Rechazar invitación
@@ -513,7 +536,7 @@ export default function PublicInviteView({
                       className="secondary-button"
                       type="button"
                       onClick={() =>
-                        authUser ? openLoginInApp() : setView("register")
+                        authUser ? openLoginInApp() : openActionView("register")
                       }
                     >
                       {authUser ? "Abrir en app" : "Registrarme"}
@@ -581,7 +604,7 @@ export default function PublicInviteView({
         </div>
       </section>
 
-      <section className="action-panel">
+      <section className="action-panel" ref={actionPanelRef}>
         <div className="section-copy">
           <p className="eyebrow">
             {isEvent
@@ -932,7 +955,7 @@ export default function PublicInviteView({
               <button
                 className="secondary-button"
                 type="button"
-                onClick={() => setView("register")}
+                onClick={() => openActionView("register")}
               >
                 Registro express
               </button>
@@ -946,7 +969,7 @@ export default function PublicInviteView({
               <button
                 className="text-button"
                 type="button"
-                onClick={() => setView("recover-password")}
+                onClick={() => openActionView("recover-password")}
               >
                 Recuperar contraseña
               </button>
@@ -994,7 +1017,7 @@ export default function PublicInviteView({
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setView("login")}
+                onClick={() => openActionView("login")}
               >
                 Volver al inicio de sesión
               </button>
@@ -1106,7 +1129,7 @@ export default function PublicInviteView({
             <button
               className="choice-card"
               type="button"
-              onClick={() => setView("login")}
+              onClick={() => openActionView("login")}
             >
               <span>Ya tengo cuenta</span>
               <strong>Iniciar sesión</strong>
@@ -1114,7 +1137,9 @@ export default function PublicInviteView({
             <button
               className="choice-card accent"
               type="button"
-              onClick={() => setView(isEvent ? "guest-checkout" : "register")}
+              onClick={() =>
+                isEvent ? setView("guest-checkout") : openActionView("register")
+              }
             >
               <span>{isEvent ? "Sin cuenta" : "Soy nuevo en Pul"}</span>
               <strong>{isEvent ? "Comprar invitado" : "Registrarme"}</strong>
