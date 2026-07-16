@@ -202,6 +202,7 @@ export function normalizePlan(document, id) {
   const planVariant = getPlanVariant(data);
   const originType = data.origenTipo || data.originType || "";
   const originId = data.origenId || data.originId || "";
+  const linkedEntity = data.linkedEntity ?? null;
   const attendees = integrantesUsers.length
     ? integrantesUsers
     : integrantesIds.map((memberId) =>
@@ -212,7 +213,8 @@ export function normalizePlan(document, id) {
     id: data.id || id,
     kind: "plan",
     planVariant,
-    title: data.concepto || data.linkedEntity?.title || "Plan en Pul",
+    linkedEntity,
+    title: data.concepto || linkedEntity?.title || "Plan en Pul",
     description:
       data.descripcion ||
       data.indicacines ||
@@ -221,7 +223,7 @@ export function normalizePlan(document, id) {
     time: data.hora || "",
     endDate: data.fechaFin || "",
     endTime: data.horaFin || "",
-    address: data.direccion || data.linkedEntity?.address || "",
+    address: data.direccion || linkedEntity?.address || "",
     host: host.nombre || "Anfitrión Pul",
     hostId: host.id || "",
     hostImage: host.imagen || "",
@@ -237,7 +239,7 @@ export function normalizePlan(document, id) {
       (Array.isArray(data.tags)
         ? data.tags.map((tag) => `#${tag}`).join(" ")
         : data.tendencias?.tags || []),
-    image: data.linkedEntity?.image || "",
+    image: linkedEntity?.image || "",
     integrantesIds,
     solicitudesIds,
     attendees,
@@ -251,7 +253,11 @@ export function normalizePlan(document, id) {
     origenTipo: originType,
     origenId: originId,
     isOriginPlan: Boolean(originType && originId),
-    live: data.live
+    live: data.live,
+    raw: {
+      ...data,
+      linkedEntity,
+    },
   };
 }
 

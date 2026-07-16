@@ -113,6 +113,32 @@ const initialGuestForm = {
 const EVENT_PUBLIC_ATTENDEES_LIMIT = 50;
 const EVENT_ATTENDEES_INITIAL_SIZE = 10;
 const EVENT_ATTENDEES_PAGE_SIZE = 20;
+const EXPRESS_REGISTRATION_ORIGIN_CONFIG = {
+  plan: {
+    tipo: "plan",
+    collection: "planes",
+    idKey: "planId",
+    path: "plan",
+  },
+  reserva: {
+    tipo: "reservacion",
+    collection: "reservaciones",
+    idKey: "reservacionId",
+    path: "reserva",
+  },
+  event: {
+    tipo: "evento",
+    collection: "eventos",
+    idKey: "eventoId",
+    path: "evento",
+  },
+  eventDetail: {
+    tipo: "detalle_evento",
+    collection: "eventosUsers",
+    idKey: "eventDetailId",
+    path: "eventodetalle",
+  },
+};
 
 function goHome() {
   window.location.assign("/");
@@ -256,6 +282,20 @@ function buildNameSearchTokens(name) {
   }
 
   return Array.from(tokens).filter(Boolean);
+}
+
+function cleanMetricValue(value) {
+  return value === undefined || value === null || value === ""
+    ? undefined
+    : value;
+}
+
+function compactMetricObject(source) {
+  return Object.fromEntries(
+    Object.entries(source).filter(
+      ([, value]) => cleanMetricValue(value) !== undefined,
+    ),
+  );
 }
 
 /**
@@ -1367,6 +1407,120 @@ function PublicInviteScreen() {
     return await response.json();
   };
 
+  const buildExpressRegistrationOrigin = () => {
+    const detectedKind = invite?.kind || context.kind || "plan";
+    const config =
+      EXPRESS_REGISTRATION_ORIGIN_CONFIG[detectedKind] ||
+      EXPRESS_REGISTRATION_ORIGIN_CONFIG.plan;
+    const itemId = invite?.id || context.id || "";
+    const raw = invite?.raw || {};
+    const event = raw.evento || raw.eventPurchase?.event || {};
+    const ticket = raw.boleto || raw.eventPurchase?.boleto || {};
+    const table = raw.mesa || raw.eventPurchase?.mesa || {};
+    const business = raw.negocio || {};
+    const planVariant = invite?.planVariant || raw.planVariant || "";
+    const planOriginType = invite?.origenTipo || raw.origenTipo || raw.originType;
+    const planOriginId = invite?.origenId || raw.origenId || raw.originId;
+    const anfitrionName =
+      raw.anfitrion?.nombre || invite?.host || raw.nombreNegocio || "";
+    const anfitrionId =
+      raw.anfitrion?.id ||
+      invite?.hostId ||
+      raw.createdBy ||
+      raw.draftOwnerId ||
+      "";
+    const direccion =
+      invite?.address ||
+      raw.direccion ||
+      raw.ubicacion ||
+      raw.linkedEntity?.address ||
+      business.direccion ||
+      business.ubicacion ||
+      event.ubicacion ||
+      event.address ||
+      "";
+    const descripcion =
+      invite?.description ||
+      raw.descripcion ||
+      raw.indicacines ||
+      raw.peticion ||
+      raw.especificaciones ||
+      raw.linkedEntity?.description ||
+      event.descripcion ||
+      event.especificaciones ||
+      "";
+    const origin = {
+      ...compactMetricObject({
+        tipo: config.tipo,
+        id: itemId,
+        [config.idKey]: itemId,
+        coleccion: config.collection,
+        titulo: invite?.title || raw.concepto || raw.nombre || event.nombre,
+        canonicalUrl: itemId
+          ? `https://pul.com.mx/${config.path}/${itemId}`
+          : "",
+        inviteKind: invite?.kind,
+        contextKind: context.kind,
+        fecha: invite?.date || raw.fecha || event.fechaString,
+        hora: invite?.time || raw.hora || event.horaInicio,
+      }),
+      anfitrionName,
+      anfitrionId,
+      direccion,
+      descripcion,
+    };
+
+    if (detectedKind === "plan") {
+      const isLinkedEntityPlan = ["event", "business"].includes(planVariant);
+      const linkedEntity = invite?.linkedEntity ?? raw.linkedEntity ?? null;
+
+      return {
+        ...origin,
+        ...compactMetricObject({
+          planId: itemId,
+          planVariant,
+          origenTipo: planOriginType,
+          origenId: planOriginId,
+        }),
+        ...(isLinkedEntityPlan ? { linkedEntity } : {}),
+      };
+    }
+
+    if (detectedKind === "reserva") {
+      return {
+        ...origin,
+        ...compactMetricObject({
+          reservacionId: itemId,
+          negocioId: business.id,
+          negocioNombre: business.nombre,
+        }),
+      };
+    }
+
+    if (detectedKind === "event") {
+      return {
+        ...origin,
+        ...compactMetricObject({
+          eventoId: itemId,
+          eventoNombre: invite?.title || raw.nombre,
+        }),
+      };
+    }
+
+    return {
+      ...origin,
+      ...compactMetricObject({
+        eventDetailId: itemId,
+        eventoId: event.id || raw.eventId || raw.eventoId || raw.eventPurchase?.eventId,
+        eventoNombre: event.nombre,
+        boletoId: ticket.id,
+        boletoNombre: ticket.nombre,
+        mesaId: table.id,
+        mesaNombre: table.tipoMesa || table.zona,
+      }),
+    };
+  };
+
   /** Envia bienvenida al correo del usuario recien registrado sin bloquear el alta. */
   const sendWelcomeEmail = async (user) => {
     const email = user?.email?.trim();
@@ -1806,6 +1960,7 @@ function PublicInviteScreen() {
         email: firebaseUser.email || registerForm.email.trim(),
         phone: registerForm.telefono.trim(),
       });
+      const registroExpressOrigen = buildExpressRegistrationOrigin();
 
       // OBJETO USUARIO
       const userData = {
@@ -1817,6 +1972,9 @@ function PublicInviteScreen() {
         telefono: registerForm.telefono.trim(),
         method: "express-register",
         fueExpress: true,
+        registroExpressOrigen,
+        registroExpressOrigenTipo: registroExpressOrigen.tipo,
+        registroExpressOrigenId: registroExpressOrigen.id,
         createdAt: new Date().toISOString(),
         nombreBusqueda: buildNameSearchTokens(registerForm.nombre.trim()),
       };
@@ -1843,6 +2001,10 @@ function PublicInviteScreen() {
           registerForm.email.split("@")[0],
         email: firebaseUserLogin.email || loginForm.email.trim(),
         method: "express-register",
+        fueExpress: true,
+        registroExpressOrigen,
+        registroExpressOrigenTipo: registroExpressOrigen.tipo,
+        registroExpressOrigenId: registroExpressOrigen.id,
         createdAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -2168,7 +2330,7 @@ function PublicInviteScreen() {
 
       if (isGuestPurchase) {
         setPlanJoinMessage(
-          "Stripe no devolvi\u00f3 una URL de pago para abrir el checkout.",
+          "Stripe no devolvió una URL de pago para abrir el checkout.",
         );
         setFlowStatus("purchase-error");
         return;
@@ -2220,7 +2382,7 @@ function PublicInviteScreen() {
       });
       setPlanJoinMessage(
         error.message ||
-          "No se pudo abrir Stripe. Revisa que el endpoint de checkout est\u00e9 disponible.",
+          "No se pudo abrir Stripe. Revisa que el endpoint de checkout esté disponible.",
       );
       setFlowStatus("purchase-error");
     }
