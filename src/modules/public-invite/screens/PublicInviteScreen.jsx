@@ -575,6 +575,10 @@ function PublicInviteScreen() {
           setInviteStatus("missing");
           return;
         }
+        if (data.kind === "plan" && data.raw?.terminado === true) {
+          showNotFound("plan");
+          return;
+        }
         if (
           data.kind === "reserva" &&
           shouldHideReservationForUser(data.raw, getUserId(authUser))
@@ -741,8 +745,14 @@ function PublicInviteScreen() {
             return;
           }
 
+          const planData = snap.data();
+          if (planData?.terminado === true) {
+            showNotFound("plan");
+            return;
+          }
+
           const normalized = normalizePlan(
-            { fields: null, ...snap.data() },
+            { fields: null, ...planData },
             snap.id,
           );
           const legacyMembers = normalized.integrantesIds || [];
