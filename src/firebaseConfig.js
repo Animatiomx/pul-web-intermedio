@@ -14,6 +14,6 @@ export const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '593021913800',
   appId:
     import.meta.env.VITE_FIREBASE_APP_ID ||
-    '1:593021913800:web:20d5dee8d335b37407b3fd"',
+    '1:593021913800:web:20d5dee8d335b37407b3fd',
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-8RRLEWC2SE',
 }
