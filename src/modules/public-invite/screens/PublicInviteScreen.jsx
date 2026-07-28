@@ -24,6 +24,7 @@ import {
   RESERVA_RESPONSE_ENDPOINT,
   STRIPE_CHECKOUT_ENDPOINT,
   STRIPE_PAYMENT_INTENT_ENDPOINT,
+  URL_PAGE,
 } from "../../../shared/constants/appConfig";
 import {
   attemptOpenApp,
@@ -650,7 +651,7 @@ function PublicInviteScreen() {
           id: completion?.purchaseId || purchase.id,
           paymentIntentId:
             completion?.paymentIntentId || purchase.paymentIntentId || "",
-          publicDetailUrl: `https://pul.com.mx/eventodetalle/${
+          publicDetailUrl: `${URL_PAGE}/eventodetalle/${
             completion?.purchaseId || purchase.id
           }`,
         };
@@ -1467,7 +1468,7 @@ function PublicInviteScreen() {
         coleccion: config.collection,
         titulo: invite?.title || raw.concepto || raw.nombre || event.nombre,
         canonicalUrl: itemId
-          ? `https://pul.com.mx/${config.path}/${itemId}`
+          ? `${URL_PAGE}/${config.path}/${itemId}`
           : "",
         inviteKind: invite?.kind,
         contextKind: context.kind,
@@ -1544,7 +1545,7 @@ function PublicInviteScreen() {
           id: user.id || user.uid || "",
           nombre: user.nombre || user.displayName || email.split("@")[0],
           email,
-          downloadUrl: window.location.origin || "https://pul.com.mx",
+          downloadUrl: window.location.origin || URL_PAGE,
         },
       });
     } catch (error) {
@@ -1618,7 +1619,7 @@ function PublicInviteScreen() {
   const getAbsoluteAssetUrl = (assetUrl) => {
     if (!assetUrl) return "";
     if (/^https?:\/\//i.test(assetUrl)) return assetUrl;
-    const origin = window.location.origin || "https://pul.com.mx";
+    const origin = window.location.origin || URL_PAGE;
     return `${origin}${assetUrl.startsWith("/") ? "" : "/"}${assetUrl}`;
   };
 
@@ -1694,7 +1695,7 @@ function PublicInviteScreen() {
           planVariant: plan.planVariant || invite.planVariant || "",
           originType:
             plan.origenTipo || plan.originType || invite.origenTipo || "",
-          url: `https://pul.com.mx/plan/${invite.id}`,
+          url: `${URL_PAGE}/plan/${invite.id}`,
           image: getPlanEmailImage(plan),
           date: plan.date || plan.fecha || invite.date || "",
           time: plan.time || plan.hora || invite.time || "",
@@ -1771,7 +1772,7 @@ function PublicInviteScreen() {
           id: invite.id,
           businessName: business.nombre || invite.title || "Reservación PUL",
           hostName: host.nombre || "el anfitrión",
-          url: `https://pul.com.mx/reserva/${invite.id}`,
+          url: `${URL_PAGE}/reserva/${invite.id}`,
           image:
             business.imagen ||
             business.fotoHome ||
@@ -1846,7 +1847,7 @@ function PublicInviteScreen() {
           itemTypeLabel: "evento",
           businessName: event.nombre || invite.title || "Evento PUL",
           hostName: host.nombre || "el anfitrión",
-          url: `https://pul.com.mx/eventodetalle/${invite.id}`,
+          url: `${URL_PAGE}/eventodetalle/${invite.id}`,
           image:
             event.fotoHome ||
             event.imagen ||
@@ -2290,7 +2291,7 @@ function PublicInviteScreen() {
           telefono: buyerPhone,
         },
         ticketClaimCode,
-        publicDetailUrl: `https://pul.com.mx/eventodetalle/${purchaseId}`,
+        publicDetailUrl: `${URL_PAGE}/eventodetalle/${purchaseId}`,
         eventPurchaseDraft,
         qrPayload: JSON.stringify({
           eventId: invite.id,

@@ -14,7 +14,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "../../../firebase";
-import { DEBUG_PREFIX } from "../../../shared/constants/appConfig";
+import { DEBUG_PREFIX, URL_PAGE } from "../../../shared/constants/appConfig";
 import { sendOneSignalNotification } from "../../../shared/services/notifications.service";
 import {
   getUniqueIds,
@@ -542,7 +542,7 @@ async function buildPlanEmailFallback(plan, hostUser, status, targetUser) {
         plan?.address ||
         "Ubicación por confirmar",
       coordinates: plan?.coordenadas || linked.coordinates || plan?.coordinates,
-      url: `https://pul.com.mx/plan/${plan?.id || ""}`,
+      url: `${URL_PAGE}/plan/${plan?.id || ""}`,
       originType: plan?.origenTipo || plan?.originType || "",
       planVariant: getPlanEmailVariant(plan),
       hostName,
