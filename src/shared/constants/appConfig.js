@@ -16,9 +16,9 @@ export const EVENT_DETAIL_DEEP_LINK_BASE =
 export const EVENT_DEEP_LINK_BASE =
   import.meta.env.VITE_EVENT_DEEP_LINK_BASE || "pul://evento";
 export const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL || "https://apitest.pul.com.mx";
+  import.meta.env.VITE_BACKEND_URL || "https://api.pul.com.mx";
 export const URL_PAGE =
-  import.meta.env.VITE_BACKEND_URL || "https://pultest.com.mx";
+  import.meta.env.VITE_BACKEND_URL || "https://pul.com.mx";
 export const EVENT_CHECKOUT_ENDPOINT =
   import.meta.env.VITE_EVENT_CHECKOUT_ENDPOINT ||
   `${BACKEND_URL}/stripe/create-checkout-session`;
