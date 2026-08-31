@@ -2,8 +2,10 @@ import {
   collection,
   doc,
   getDoc,
+  query,
   runTransaction,
   serverTimestamp,
+  where,
 } from "firebase/firestore";
 import { db } from "../../../firebase";
 import { getUserId } from "../../../shared/utils/users";
@@ -92,6 +94,136 @@ function buildEventSnapshot(event) {
     fotoHome: event.fotoHome || event.image || "",
     idPerfil: event.idPerfil || "",
   };
+}
+
+/**
+ * Obtiene la fecha de finalizacion del evento para asociar la compra al cierre
+ * semanal que le corresponde. Los eventos existentes guardan la fecha como
+ * `YYYY-MM-DD`, pero se conserva un fallback para datos legacy parseables por
+ * el navegador.
+ */
+function getEventFinishDate(eventSnapshot) {
+  const date = String(
+    eventSnapshot.fechaStringFin || eventSnapshot.fechaString || "",
+  ).trim();
+  const time = String(eventSnapshot.horaFin || "23:59").trim();
+  if (!date) return null;
+
+  const isoDateTime = /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? `${date}T${time.length === 5 ? `${time}:00` : time}`
+    : `${date} ${time}`;
+  const result = new Date(isoDateTime);
+  return Number.isNaN(result.getTime()) ? null : result;
+}
+
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getClosureWeek(finishDate) {
+  const weekStart = new Date(finishDate);
+  const day = weekStart.getDay();
+  const daysSinceMonday = (day + 6) % 7;
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
+
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  return { weekStart: toDateKey(weekStart), weekEnd: toDateKey(weekEnd) };
+}
+
+function calculateClosureTotals(purchase, business = {}) {
+  const totalCuentaFinal = Number(purchase?.cuenta?.total || 0);
+  const totalComisionStripe = Number(purchase?.cuenta?.comisionStripe || 0);
+  const totalSinStripe = totalCuentaFinal - totalComisionStripe;
+  const totalComisionPul = totalSinStripe * 0.035 * 1.16;
+  const totalAntesISR = totalSinStripe - totalComisionPul;
+  const tipoPersona = business?.tipoPersona || "";
+  let totalISR = 0;
+
+  if (tipoPersona === "") totalISR = totalAntesISR * 0.01 * 1.16;
+  else if (tipoPersona !== "Moral") {
+    totalISR = totalAntesISR * 0.01 * (business?.rfc ? 1.08 : 1.16);
+  }
+
+  return {
+    totalCuentaFinal,
+    totalComisionStripe,
+    totalComisionPul,
+    totalISR,
+    totalNegocio: Number((totalAntesISR - totalISR).toFixed(2)),
+  };
+}
+
+/**
+ * Actualiza el cierre semanal ya programado para el perfil del evento. La
+ * compra, los acumulados y el detalle del cierre se escriben juntos para evitar
+ * que una compra aparezca en un total sin su booking (o viceversa).
+ */
+async function updateScheduledEventClosureInTransaction({
+  transaction,
+  purchaseRef,
+  purchase,
+  eventSnapshot,
+}) {
+  const businessId = eventSnapshot.idPerfil;
+  const finishDate = getEventFinishDate(eventSnapshot);
+  if (!businessId || !finishDate) return;
+
+  const { weekStart, weekEnd } = getClosureWeek(finishDate);
+  const closuresQuery = query(
+    collection(db, "weeklyClosures"),
+    where("businessId", "==", businessId),
+    where("weekStart", "==", weekStart),
+  );
+  const closuresSnap = await transaction.get(closuresQuery);
+  const pendingClosures = closuresSnap.docs.filter((closureDoc) => {
+    const closure = closureDoc.data();
+    return (
+      closure.weekEnd === weekEnd &&
+      closure.type === "evento" &&
+      closure.status === "pending"
+    );
+  });
+  if (!pendingClosures.length) return;
+
+  const businessRef = doc(db, "perfilEventos", businessId);
+  const businessSnap = await transaction.get(businessRef);
+  const totals = calculateClosureTotals(
+    purchase,
+    businessSnap.exists() ? businessSnap.data() : {},
+  );
+
+  pendingClosures.forEach((closureDoc) => {
+    const closure = closureDoc.data();
+    transaction.update(closureDoc.ref, {
+      totalNegocio: Number(closure.totalNegocio || 0) + totals.totalNegocio,
+      totalComisionStripe:
+        Number(closure.totalComisionStripe || 0) + totals.totalComisionStripe,
+      totalISR: Number(closure.totalISR || 0) + totals.totalISR,
+      totalCuentaFinal:
+        Number(closure.totalCuentaFinal || 0) + totals.totalCuentaFinal,
+      totalComisionPul:
+        Number(closure.totalComisionPul || 0) + totals.totalComisionPul,
+      updatedAt: serverTimestamp(),
+    });
+    transaction.set(closureDoc.ref.collection("bookings").doc(purchaseRef.id), {
+      id: purchaseRef.id,
+      fecha: "",
+      ...totals,
+      anfitrion: purchase.anfitrion || "",
+      barraLibre: "",
+      mesa: purchase.mesa || "",
+      boleto: purchase.boleto || "",
+      fechaHoraFinalizacion: purchase.fechaHoraFinalizacion,
+      hora: "",
+      status: purchase.status,
+      createdAt: purchase.createdAt,
+    });
+  });
 }
 
 function buildMember(buyer, fallbackId) {
@@ -197,6 +329,7 @@ export function buildEventPurchaseDraft({
   if (type === "ticket")
     eventPurchase.boleto = getTicketPayload(item, quantity);
   if (type === "zona") eventPurchase.mesa = getMesaPayload(item);
+  const fechaHoraFinalizacion = getEventFinishDate(eventSnapshot);
 
   return {
     id: purchaseId,
@@ -232,6 +365,7 @@ export function buildEventPurchaseDraft({
     dateTime: new Date(
       `${eventSnapshot.fechaString} ${eventSnapshot.horaInicio}`,
     ),
+    fechaHoraFinalizacion,
     cuenta,
     cuentaPorCobrar: false,
     paymentRequestStatus: "complete",
@@ -339,6 +473,16 @@ export async function commitEventPurchase({
           new Set([...currentEventParticipantIds, memberId].filter(Boolean)),
         )
       : currentEventParticipantIds;
+
+    // Se consultan y actualizan los acumulados del cierre antes de cualquier
+    // write de la transaccion. Firestore exige que todas las lecturas ocurran
+    // antes de la primera escritura.
+    await updateScheduledEventClosureInTransaction({
+      transaction,
+      purchaseRef,
+      purchase,
+      eventSnapshot: purchase.evento,
+    });
 
     // Disponibilidad y documento de compra se actualizan en la misma transaccion
     // para no vender mas boletos o mesas de las disponibles.
